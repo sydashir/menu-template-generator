@@ -13,7 +13,7 @@ load_dotenv()
 
 from extractor import (
     load_pages, extract_blocks_pdf, extract_blocks_image,
-    detect_logo_pdf, is_double_sided, split_double_sided,
+    detect_logo_pdf, is_double_sided, split_double_sided, extract_separators_pdf,
 )
 from separator import detect_separators
 from analyzer import detect_columns, classify_blocks, build_menu_data
@@ -72,7 +72,17 @@ def process(file_path: str, output_dir: str, file_stem: str = None) -> list[dict
                 raw_blocks = extract_blocks_image(side_img, page_idx)
 
             # --- separator detection ---
-            lines = detect_separators(side_img)
+            if ext in SUPPORTED_PDF:
+                lines = extract_separators_pdf(
+                    file_path=file_path,
+                    page_idx=page_idx,
+                    side_label=side_label,
+                    side_canvas_w=canvas_w if side_label in ("front", "back") else None,
+                )
+                if not lines:
+                    lines = detect_separators(side_img)
+            else:
+                lines = detect_separators(side_img)
 
             # --- logo ---
             logo_info = None

@@ -25,13 +25,13 @@ async def process_menu(file: UploadFile = File(...)):
     Upload a menu PDF or image (JPG/PNG).
     Returns paths to the generated menu_data.json and template.json files.
     """
-    allowed = {".pdf", ".jpg", ".jpeg", ".png"}
+    allowed = {".pdf", ".jpg", ".jpeg", ".png", ".webp"}
     ext = Path(file.filename).suffix.lower()
 
     if ext not in allowed:
         raise HTTPException(
             status_code=400,
-            detail=f"Unsupported file type '{ext}'. Upload PDF, JPG, or PNG. "
+                 detail=f"Unsupported file type '{ext}'. Upload PDF, JPG, PNG, or WEBP. "
                    "PSD files must be exported to PNG first.",
         )
 

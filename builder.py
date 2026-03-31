@@ -18,17 +18,9 @@ def _make_id(prefix: str, *parts) -> str:
 
 
 def _infer_font_size(block: RawBlock, max_font: float) -> float:
-    # Cap at 72pt; scale everything relative to the largest font
-    ratio = block.font_size / max(max_font, 1)
-    if ratio > 0.85:
-        return 36.0
-    if ratio > 0.65:
-        return 24.0
-    if ratio > 0.45:
-        return 18.0
-    if ratio > 0.30:
-        return 14.0
-    return 11.0
+    # Preserve extracted font size for highest-fidelity template reconstruction.
+    # (The caller already provides values in output canvas-space units.)
+    return round(max(1.0, float(block.font_size)), 2)
 
 
 def _infer_alignment(block: RawBlock, canvas_w: float) -> str:
@@ -66,7 +58,7 @@ def build_template(
             content=block.text.strip(),
             style=TextStyle(
                 font_size=font_size,
-                font_weight="bold" if block.is_bold or sem in ("restaurant_name", "category_header") else "normal",
+                font_weight="bold" if block.is_bold else "normal",
                 font_style="italic" if block.is_italic else "normal",
                 text_align=alignment,
             ),
