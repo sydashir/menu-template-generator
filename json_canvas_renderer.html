@@ -1,0 +1,560 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Menu JSON Canvas Renderer</title>
+  <style>
+    :root {
+      --bg: #0f172a;
+      --panel: #111827;
+      --card: #1f2937;
+      --text: #e5e7eb;
+      --muted: #9ca3af;
+      --accent: #22c55e;
+      --danger: #ef4444;
+      --line: #374151;
+    }
+    body {
+      margin: 0;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+    }
+    .wrap {
+      display: grid;
+      grid-template-columns: 340px 1fr;
+      min-height: 100vh;
+    }
+    .sidebar {
+      background: var(--panel);
+      border-right: 1px solid var(--line);
+      padding: 16px;
+      overflow: auto;
+    }
+    .main {
+      padding: 16px;
+      overflow: auto;
+    }
+    h1 {
+      font-size: 18px;
+      margin: 0 0 14px;
+    }
+    .section {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 12px;
+      margin-bottom: 12px;
+    }
+    .section h2 {
+      font-size: 13px;
+      margin: 0 0 10px;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: .04em;
+    }
+    .row {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      margin-bottom: 8px;
+    }
+    .row:last-child { margin-bottom: 0; }
+    label, .small {
+      font-size: 12px;
+      color: var(--muted);
+    }
+    input[type="file"], select, button {
+      width: 100%;
+      background: #0b1220;
+      color: var(--text);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 8px;
+      font-size: 12px;
+    }
+    button {
+      cursor: pointer;
+      font-weight: 600;
+    }
+    button:hover {
+      border-color: #4b5563;
+    }
+    .stat {
+      display: flex;
+      justify-content: space-between;
+      font-size: 12px;
+      border-bottom: 1px dashed var(--line);
+      padding: 6px 0;
+    }
+    .stat:last-child { border-bottom: 0; }
+    .badge {
+      color: #111827;
+      background: var(--accent);
+      border-radius: 999px;
+      padding: 1px 8px;
+      font-weight: 700;
+      font-size: 11px;
+    }
+    .canvas-wrap {
+      background: #0b1220;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 10px;
+      min-height: 70vh;
+      display: grid;
+      place-items: center;
+    }
+    canvas {
+      max-width: 100%;
+      height: auto;
+      background: white;
+      box-shadow: 0 10px 30px rgba(0,0,0,.3);
+    }
+    pre {
+      white-space: pre-wrap;
+      word-break: break-word;
+      background: #0b1220;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 10px;
+      max-height: 220px;
+      overflow: auto;
+      font-size: 11px;
+      color: #d1d5db;
+    }
+    .ok { color: var(--accent); }
+    .err { color: var(--danger); }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <aside class="sidebar">
+      <h1>Canvas JSON Validator</h1>
+
+      <div class="section">
+        <h2>1) Load template JSON file(s)</h2>
+        <input id="templateFiles" type="file" accept="application/json,.json" multiple />
+        <div class="row" style="margin-top:8px">
+          <label for="templateSelect">Template</label>
+        </div>
+        <select id="templateSelect"></select>
+        <div class="row" style="margin-top:8px">
+          <button id="prevBtn">Previous</button>
+          <button id="nextBtn">Next</button>
+        </div>
+      </div>
+
+      <div class="section">
+        <h2>2) Optional menu_data JSON</h2>
+        <input id="menuDataFile" type="file" accept="application/json,.json" />
+      </div>
+
+      <div class="section">
+        <h2>3) Rendering options</h2>
+        <div class="row"><input id="showBBoxes" type="checkbox" checked /><label for="showBBoxes">Show bounding boxes</label></div>
+        <div class="row"><input id="showIds" type="checkbox" /><label for="showIds">Show element ids</label></div>
+        <div class="row"><input id="showSubtypes" type="checkbox" /><label for="showSubtypes">Show subtypes</label></div>
+        <div class="row">
+          <label for="scaleRange" style="min-width:48px">Scale</label>
+          <input id="scaleRange" type="range" min="25" max="200" value="100" style="flex:1" />
+          <span id="scaleLabel" class="small">100%</span>
+        </div>
+      </div>
+
+      <div class="section">
+        <h2>Template stats</h2>
+        <div id="stats"></div>
+      </div>
+
+      <div class="section">
+        <h2>Validation</h2>
+        <div id="validation" class="small"></div>
+      </div>
+    </aside>
+
+    <main class="main">
+      <div class="canvas-wrap">
+        <canvas id="canvas" width="1200" height="1600"></canvas>
+      </div>
+
+      <div class="section" style="margin-top:12px">
+        <h2>Loaded JSON preview</h2>
+        <pre id="jsonPreview">No file loaded.</pre>
+      </div>
+
+      <div class="section">
+        <h2>Menu data summary (optional)</h2>
+        <pre id="menuSummary">No menu_data loaded.</pre>
+      </div>
+    </main>
+  </div>
+
+  <script>
+    const state = {
+      templates: [],
+      templateFiles: [],
+      index: 0,
+      menuData: null,
+      scale: 1,
+      logoImageCache: new Map(),
+    };
+
+    const els = {
+      templateFiles: document.getElementById('templateFiles'),
+      templateSelect: document.getElementById('templateSelect'),
+      menuDataFile: document.getElementById('menuDataFile'),
+      showBBoxes: document.getElementById('showBBoxes'),
+      showIds: document.getElementById('showIds'),
+      showSubtypes: document.getElementById('showSubtypes'),
+      prevBtn: document.getElementById('prevBtn'),
+      nextBtn: document.getElementById('nextBtn'),
+      scaleRange: document.getElementById('scaleRange'),
+      scaleLabel: document.getElementById('scaleLabel'),
+      canvas: document.getElementById('canvas'),
+      stats: document.getElementById('stats'),
+      validation: document.getElementById('validation'),
+      jsonPreview: document.getElementById('jsonPreview'),
+      menuSummary: document.getElementById('menuSummary'),
+    };
+
+    const ctx = els.canvas.getContext('2d');
+
+    function safeNum(v, fallback = 0) {
+      const n = Number(v);
+      return Number.isFinite(n) ? n : fallback;
+    }
+
+    function currentTemplate() {
+      return state.templates[state.index] || null;
+    }
+
+    function clearCanvas() {
+      ctx.clearRect(0, 0, els.canvas.width, els.canvas.height);
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, els.canvas.width, els.canvas.height);
+    }
+
+    function drawTextElement(el) {
+      const b = el.bbox || {};
+      const s = el.style || {};
+      const x = safeNum(b.x) * state.scale;
+      const y = safeNum(b.y) * state.scale;
+      const w = Math.max(1, safeNum(b.w)) * state.scale;
+      const h = Math.max(1, safeNum(b.h)) * state.scale;
+
+      const fontSize = Math.max(8, safeNum(s.font_size, 12)) * state.scale;
+      const fontWeight = s.font_weight || 'normal';
+      const fontStyle = s.font_style || 'normal';
+      const color = s.color || '#000000';
+      const align = s.text_align || 'left';
+
+      ctx.fillStyle = color;
+      ctx.textAlign = align;
+      ctx.textBaseline = 'alphabetic';
+      ctx.font = `${fontStyle} ${fontWeight} ${fontSize}px Arial`;
+
+      let tx = x;
+      if (align === 'center') tx = x + w / 2;
+      if (align === 'right') tx = x + w;
+      const ty = y + fontSize * 0.95;
+
+      const content = (el.content || '').toString();
+      ctx.fillText(content, tx, ty, w);
+
+      if (els.showBBoxes.checked) {
+        ctx.strokeStyle = '#60a5fa';
+        ctx.lineWidth = 1;
+        ctx.strokeRect(x, y, w, h);
+      }
+
+      if (els.showIds.checked || els.showSubtypes.checked) {
+        const idTxt = els.showIds.checked ? (el.id || '') : '';
+        const stTxt = els.showSubtypes.checked ? (el.subtype || '') : '';
+        const tag = [idTxt, stTxt].filter(Boolean).join(' • ');
+        if (tag) {
+          ctx.fillStyle = '#111827';
+          ctx.globalAlpha = 0.82;
+          ctx.fillRect(x, Math.max(0, y - 14), Math.min(w, 360), 14);
+          ctx.globalAlpha = 1;
+          ctx.fillStyle = '#22c55e';
+          ctx.font = `normal 10px Arial`;
+          ctx.textAlign = 'left';
+          ctx.fillText(tag, x + 3, Math.max(10, y - 3), Math.min(w - 6, 354));
+        }
+      }
+    }
+
+    function drawSeparatorElement(el) {
+      const b = el.bbox || {};
+      const style = el.style || {};
+      const x = safeNum(b.x) * state.scale;
+      const y = safeNum(b.y) * state.scale;
+      const w = Math.max(1, safeNum(b.w)) * state.scale;
+      const h = Math.max(1, safeNum(b.h)) * state.scale;
+
+      ctx.strokeStyle = style.color || '#000000';
+      ctx.lineWidth = Math.max(1, safeNum(style.stroke_width, 2)) * state.scale;
+      ctx.beginPath();
+      if ((el.orientation || 'horizontal') === 'vertical') {
+        ctx.moveTo(x + w / 2, y);
+        ctx.lineTo(x + w / 2, y + h);
+      } else {
+        ctx.moveTo(x, y + h / 2);
+        ctx.lineTo(x + w, y + h / 2);
+      }
+      ctx.stroke();
+
+      if (els.showBBoxes.checked) {
+        ctx.strokeStyle = '#f59e0b';
+        ctx.lineWidth = 1;
+        ctx.strokeRect(x, y, w, h);
+      }
+    }
+
+    async function drawLogoElement(el) {
+      const b = el.bbox || {};
+      const x = safeNum(b.x) * state.scale;
+      const y = safeNum(b.y) * state.scale;
+      const w = Math.max(1, safeNum(b.w)) * state.scale;
+      const h = Math.max(1, safeNum(b.h)) * state.scale;
+
+      const imageData = el.image_data;
+      if (imageData) {
+        const key = imageData.slice(0, 80);
+        if (!state.logoImageCache.has(key)) {
+          const img = new Image();
+          const p = new Promise((resolve, reject) => {
+            img.onload = () => resolve(img);
+            img.onerror = reject;
+          });
+          img.src = `data:image/png;base64,${imageData}`;
+          state.logoImageCache.set(key, p);
+        }
+        try {
+          const img = await state.logoImageCache.get(key);
+          ctx.drawImage(img, x, y, w, h);
+        } catch {
+          drawLogoPlaceholder(x, y, w, h);
+        }
+      } else {
+        drawLogoPlaceholder(x, y, w, h);
+      }
+
+      if (els.showBBoxes.checked) {
+        ctx.strokeStyle = '#ec4899';
+        ctx.lineWidth = 1;
+        ctx.strokeRect(x, y, w, h);
+      }
+    }
+
+    function drawLogoPlaceholder(x, y, w, h) {
+      ctx.fillStyle = '#f3f4f6';
+      ctx.fillRect(x, y, w, h);
+      ctx.strokeStyle = '#ec4899';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(x, y, w, h);
+      ctx.fillStyle = '#be185d';
+      ctx.font = `${Math.max(10, 14 * state.scale)}px Arial`;
+      ctx.textAlign = 'center';
+      ctx.fillText('LOGO', x + w / 2, y + h / 2);
+    }
+
+    async function render() {
+      const t = currentTemplate();
+      if (!t) {
+        clearCanvas();
+        els.jsonPreview.textContent = 'No file loaded.';
+        els.stats.innerHTML = '<div class="small">Load one or more template JSON files.</div>';
+        els.validation.innerHTML = '<span class="err">No template loaded</span>';
+        return;
+      }
+
+      const cw = Math.max(100, safeNum(t.canvas?.width, 1200));
+      const ch = Math.max(100, safeNum(t.canvas?.height, 1600));
+      els.canvas.width = Math.round(cw * state.scale);
+      els.canvas.height = Math.round(ch * state.scale);
+
+      clearCanvas();
+
+      const elements = Array.isArray(t.elements) ? t.elements : [];
+      for (const el of elements) {
+        if (el.type === 'text') drawTextElement(el);
+        else if (el.type === 'separator') drawSeparatorElement(el);
+      }
+      for (const el of elements) {
+        if (el.type === 'logo') await drawLogoElement(el);
+      }
+
+      els.jsonPreview.textContent = JSON.stringify(t, null, 2);
+      updateStats(t);
+      updateValidation(t, state.menuData);
+    }
+
+    function updateStats(t) {
+      const elements = Array.isArray(t.elements) ? t.elements : [];
+      const byType = {};
+      const bySubtype = {};
+      for (const el of elements) {
+        byType[el.type] = (byType[el.type] || 0) + 1;
+        if (el.subtype) bySubtype[el.subtype] = (bySubtype[el.subtype] || 0) + 1;
+      }
+
+      const rows = [];
+      rows.push(statRow('Template', state.templateFiles[state.index]?.name || 'unknown'));
+      rows.push(statRow('Canvas', `${t.canvas?.width || '?'} × ${t.canvas?.height || '?'} px`));
+      rows.push(statRow('Total elements', badge(elements.length)));
+      rows.push(statRow('Text', badge(byType.text || 0)));
+      rows.push(statRow('Separators', badge(byType.separator || 0)));
+      rows.push(statRow('Logo', badge(byType.logo || 0)));
+      rows.push('<div class="small" style="margin-top:8px">Subtypes:</div>');
+
+      const sortedSub = Object.entries(bySubtype).sort((a, b) => b[1] - a[1]);
+      for (const [k, v] of sortedSub) rows.push(statRow(k, v));
+
+      els.stats.innerHTML = rows.join('');
+    }
+
+    function badge(v) {
+      return `<span class="badge">${v}</span>`;
+    }
+
+    function statRow(k, v) {
+      return `<div class="stat"><span>${k}</span><span>${v}</span></div>`;
+    }
+
+    function updateValidation(t, menuData) {
+      const out = [];
+      const elements = Array.isArray(t.elements) ? t.elements : [];
+
+      const hasCanvas = Number.isFinite(t.canvas?.width) && Number.isFinite(t.canvas?.height);
+      out.push(`<div>${hasCanvas ? '<span class="ok">✓</span>' : '<span class="err">✗</span>'} Canvas dimensions present</div>`);
+
+      const hasElements = elements.length > 0;
+      out.push(`<div>${hasElements ? '<span class="ok">✓</span>' : '<span class="err">✗</span>'} Elements present</div>`);
+
+      const hasText = elements.some(e => e.type === 'text');
+      out.push(`<div>${hasText ? '<span class="ok">✓</span>' : '<span class="err">✗</span>'} Text elements found</div>`);
+
+      const hasSep = elements.some(e => e.type === 'separator');
+      out.push(`<div>${hasSep ? '<span class="ok">✓</span>' : '<span class="err">✗</span>'} Separator elements found</div>`);
+
+      const allHaveBBox = elements.every(e => e.bbox && [e.bbox.x, e.bbox.y, e.bbox.w, e.bbox.h].every(Number.isFinite));
+      out.push(`<div>${allHaveBBox ? '<span class="ok">✓</span>' : '<span class="err">✗</span>'} All elements have numeric bbox</div>`);
+
+      if (menuData) {
+        const categoryCount = Array.isArray(menuData.categories) ? menuData.categories.length : 0;
+        let itemCount = 0;
+        for (const c of (menuData.categories || [])) itemCount += (c.items || []).length;
+
+        out.push('<hr style="border:0;border-top:1px dashed #374151;margin:8px 0">');
+        out.push(`<div><span class="ok">✓</span> menu_data loaded</div>`);
+        out.push(`<div>Categories: <strong>${categoryCount}</strong></div>`);
+        out.push(`<div>Items: <strong>${itemCount}</strong></div>`);
+      }
+
+      els.validation.innerHTML = out.join('');
+    }
+
+    async function readJsonFile(file) {
+      const txt = await file.text();
+      return JSON.parse(txt);
+    }
+
+    async function onTemplateFilesChanged() {
+      const files = Array.from(els.templateFiles.files || []);
+      state.templateFiles = files;
+      state.templates = [];
+      state.index = 0;
+
+      for (const f of files) {
+        try {
+          const j = await readJsonFile(f);
+          state.templates.push(j);
+        } catch (e) {
+          console.error('Invalid JSON:', f.name, e);
+        }
+      }
+
+      els.templateSelect.innerHTML = '';
+      state.templateFiles.forEach((f, i) => {
+        const opt = document.createElement('option');
+        opt.value = String(i);
+        opt.textContent = f.name;
+        els.templateSelect.appendChild(opt);
+      });
+
+      await render();
+    }
+
+    async function onMenuDataChanged() {
+      const file = (els.menuDataFile.files || [])[0];
+      state.menuData = null;
+      if (!file) {
+        els.menuSummary.textContent = 'No menu_data loaded.';
+        await render();
+        return;
+      }
+      try {
+        const j = await readJsonFile(file);
+        state.menuData = j;
+
+        const lines = [];
+        lines.push(`source_file: ${j.source_file || 'n/a'}`);
+        lines.push(`side: ${j.side || 'n/a'}`);
+        lines.push(`restaurant_name: ${j.restaurant_name || 'n/a'}`);
+        lines.push(`num_columns: ${j.num_columns ?? 'n/a'}`);
+        lines.push(`num_separators: ${j.num_separators ?? 'n/a'}`);
+        lines.push('');
+
+        let categoryCount = 0;
+        let itemCount = 0;
+        for (const cat of (j.categories || [])) {
+          categoryCount += 1;
+          const n = (cat.items || []).length;
+          itemCount += n;
+          lines.push(`- ${cat.name} (col ${cat.column ?? 0}) -> ${n} items`);
+        }
+        lines.push('');
+        lines.push(`categories_total: ${categoryCount}`);
+        lines.push(`items_total: ${itemCount}`);
+
+        els.menuSummary.textContent = lines.join('\n');
+      } catch {
+        els.menuSummary.textContent = 'Invalid menu_data JSON file.';
+      }
+      await render();
+    }
+
+    function setIndex(i) {
+      if (!state.templates.length) return;
+      state.index = (i + state.templates.length) % state.templates.length;
+      els.templateSelect.value = String(state.index);
+      render();
+    }
+
+    els.templateFiles.addEventListener('change', onTemplateFilesChanged);
+    els.menuDataFile.addEventListener('change', onMenuDataChanged);
+
+    els.templateSelect.addEventListener('change', (e) => {
+      setIndex(Number(e.target.value || 0));
+    });
+
+    els.prevBtn.addEventListener('click', () => setIndex(state.index - 1));
+    els.nextBtn.addEventListener('click', () => setIndex(state.index + 1));
+
+    for (const id of ['showBBoxes', 'showIds', 'showSubtypes']) {
+      els[id].addEventListener('change', render);
+    }
+
+    els.scaleRange.addEventListener('input', () => {
+      state.scale = Number(els.scaleRange.value) / 100;
+      els.scaleLabel.textContent = `${els.scaleRange.value}%`;
+      render();
+    });
+
+    render();
+  </script>
+</body>
+</html>
