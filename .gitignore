@@ -10,3 +10,13 @@ build/
 outputs/
 *.psd
 .DS_Store
+Menu Template/
+
+# Generated test output and comparison scripts
+extractor_comparison.json
+compare_extractors.py
+
+# Session/task notes (not source code)
+PROGRESS.md
+Copy of *.md
+.agents/

@@ -16,10 +16,10 @@ def detect_separators(img: Image.Image) -> List[RawLine]:
         arr, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 15, 3
     )
 
-    lines = []
+    lines: List[RawLine] = []
     lines += _detect_direction(binary, w, h, "horizontal")
     lines += _detect_direction(binary, w, h, "vertical")
-    return lines
+    return _dedup_lines(lines)
 
 
 def _detect_direction(binary: np.ndarray, w: int, h: int, direction: str) -> List[RawLine]:
@@ -36,20 +36,40 @@ def _detect_direction(binary: np.ndarray, w: int, h: int, direction: str) -> Lis
         x, y, cw, ch = cv2.boundingRect(cnt)
 
         if direction == "horizontal":
-            if cw < w * 0.2:  # skip short fragments
+            if cw < w * 0.10:  # skip very short fragments (lowered from 20% to 10%)
                 continue
             results.append(RawLine(
-                x1=float(x), y1=float(y + ch // 2),
-                x2=float(x + cw), y2=float(y + ch // 2),
+                x1=float(x), y1=float(y),
+                x2=float(x + cw), y2=float(y + ch),
                 orientation="horizontal",
             ))
         else:
-            if ch < h * 0.1:
+            if ch < h * 0.08:  # skip very short vertical fragments
                 continue
             results.append(RawLine(
-                x1=float(x + cw // 2), y1=float(y),
-                x2=float(x + cw // 2), y2=float(y + ch),
+                x1=float(x), y1=float(y),
+                x2=float(x + cw), y2=float(y + ch),
                 orientation="vertical",
             ))
 
     return results
+
+
+def _dedup_lines(lines: List[RawLine], tol: float = 15.0) -> List[RawLine]:
+    """Remove near-duplicate separator lines (within tol pixels in all coordinates)."""
+    dedup: List[RawLine] = []
+    for ln in lines:
+        found = False
+        for ex in dedup:
+            if (
+                ln.orientation == ex.orientation
+                and abs(ln.x1 - ex.x1) < tol
+                and abs(ln.y1 - ex.y1) < tol
+                and abs(ln.x2 - ex.x2) < tol
+                and abs(ln.y2 - ex.y2) < tol
+            ):
+                found = True
+                break
+        if not found:
+            dedup.append(ln)
+    return dedup

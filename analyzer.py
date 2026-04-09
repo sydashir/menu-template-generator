@@ -3,8 +3,8 @@ from typing import List, Tuple, Optional
 
 from models import RawBlock, SemanticType, MenuCategory, MenuItem, MenuData
 
-PRICE_RE = re.compile(r"^\$?\s?\d{1,3}(?:[./]\d{1,3})?(?:\.\d{2})?$")
-PRICE_TAIL_RE = re.compile(r"\s+(\$?\s?\d{1,3}(?:[./]\d{1,3})?(?:\.\d{2})?)$")
+PRICE_RE = re.compile(r"^\$?\s?\d{1,4}(?:[./]\d{1,4})?(?:\.\d{2})?$")
+PRICE_TAIL_RE = re.compile(r"\s+(\$?\s?\d{1,4}(?:[./]\d{1,4})?(?:\.\d{2})?)$")
 PHONE_RE = re.compile(r"[\+\(]?[1-9][0-9 \.\-\(\)]{7,}[0-9]")
 ADDRESS_KEYWORDS = {"street", "ave", "blvd", "rd", "suite", "ste", "drive"}
 
@@ -154,8 +154,11 @@ def build_menu_data(
                 # Fallback: nearest column that has a category
                 cat = next(iter(current_cats.values()), None)
             if cat is None:
-                cat = MenuCategory(name="General", column=col)
-                categories.append(cat)
+                # Reuse any existing "General" category to avoid duplicates
+                cat = next((c for c in categories if c.name == "General"), None)
+                if cat is None:
+                    cat = MenuCategory(name="General", column=col)
+                    categories.append(cat)
                 current_cats[col] = cat
             name, price = _split_name_price(text)
             cat.items.append(MenuItem(name=name, price=price))

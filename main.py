@@ -4,6 +4,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse
 
 load_dotenv()
@@ -41,9 +42,14 @@ async def process_menu(file: UploadFile = File(...)):
 
     try:
         original_stem = Path(file.filename).stem
-        results = process(tmp_path, str(OUTPUT_DIR / original_stem), file_stem=original_stem)
+        results = await run_in_threadpool(
+            process, tmp_path, str(OUTPUT_DIR / original_stem), original_stem
+        )
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
+    except Exception as e:
+        print(f"[api] unexpected error processing {file.filename!r}: {type(e).__name__}: {e}")
+        raise HTTPException(status_code=500, detail="Processing failed. Check server logs.")
     finally:
         Path(tmp_path).unlink(missing_ok=True)
 

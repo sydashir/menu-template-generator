@@ -14,6 +14,7 @@ class TextStyle(BaseModel):
     font_size: float = 12.0
     font_weight: Literal["normal", "bold"] = "normal"
     font_style: Literal["normal", "italic"] = "normal"
+    font_family: str = "sans-serif"
     color: str = "#000000"
     text_align: Literal["left", "center", "right"] = "left"
 
