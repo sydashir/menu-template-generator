@@ -46,6 +46,7 @@ class RawBlock(BaseModel):
     font_size: float = 12.0
     is_bold: bool = False
     is_italic: bool = False
+    font_family: str = "sans-serif"
     page: int = 0
     source: Literal["pdf", "ocr"] = "ocr"
 

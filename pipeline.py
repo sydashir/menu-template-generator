@@ -3,6 +3,8 @@ Core pipeline — ties extractor, separator, analyzer, and builder together.
 Called by both the FastAPI app and any direct script usage.
 """
 
+import base64
+import io
 import json
 from pathlib import Path
 from typing import Optional
@@ -18,7 +20,13 @@ from extractor import (
 from separator import detect_separators
 from analyzer import detect_columns, classify_blocks, build_menu_data
 from builder import build_template, build_template_from_claude
-from claude_extractor import build_menu_data_from_claude, extract_full_layout_via_claude, extract_full_layout_via_tool_use, merge_layouts
+from claude_extractor import (
+    build_menu_data_from_claude,
+    extract_full_layout_via_claude,
+    extract_full_layout_via_tool_use,
+    extract_layout_surya_som,
+    merge_layouts,
+)
 
 SUPPORTED_PDF = {".pdf"}
 SUPPORTED_IMG = {".jpg", ".jpeg", ".png", ".webp"}
@@ -58,22 +66,17 @@ def process(file_path: str, output_dir: str, file_stem: str = None) -> list[dict
         for side_img, side_label in sides:
             canvas_w, canvas_h = side_img.size
 
-            # Run both Claude extractors on the rasterized image (works for both image
-            # files and PDFs — PDFs are already rasterized to PIL Images by load_pages).
-            # Merging both results gives maximum element coverage including logos,
-            # whether graphical or text-based. OCR/vector path is the fallback only.
-            prompt_layout = extract_full_layout_via_claude(side_img)
-            tool_layout = extract_full_layout_via_tool_use(side_img)
-            claude_layout = merge_layouts(prompt_layout, tool_layout)
-            if claude_layout is not None:
-                src = ("both" if prompt_layout and tool_layout
-                       else "prompt" if prompt_layout else "tool_use")
-                print(f"[pipeline] claude extraction source={src}, "
-                      f"elements={len(claude_layout.get('elements', []))}")
+            # --- image extraction: parallel ensemble + chunking ---
+            # Images only — PDFs use PyMuPDF vector extraction (never Claude Vision).
+            claude_layout = None
+            if ext in SUPPORTED_IMG:
+                claude_layout = _process_side_image(side_img)
+                if claude_layout is not None:
+                    print(f"[pipeline] layout: {len(claude_layout.get('elements', []))} elements")
 
             # --- logo (PDF only, used as fallback if Claude missed it) ---
             logo_info = None
-            if ext in SUPPORTED_PDF and claude_layout is None and side_label in ("full", "front"):
+            if ext in SUPPORTED_PDF and side_label in ("full", "front"):
                 logo_info = detect_logo_pdf(file_path, page_idx)
 
             # --- build outputs ---
@@ -98,6 +101,24 @@ def process(file_path: str, output_dir: str, file_stem: str = None) -> list[dict
                     num_columns=num_cols,
                     logo_detected=any(e.get("type") == "logo" for e in elements),
                 )
+
+                # Crop logo pixels from source image for embedding in template
+                logo_image_data = None
+                for el in elements:
+                    if el.get("type") == "logo":
+                        bd = el.get("bbox") or {}
+                        x1 = max(0, int(bd.get("x", 0)))
+                        y1 = max(0, int(bd.get("y", 0)))
+                        x2 = min(canvas_w, int(bd.get("x", 0) + bd.get("w", 0)))
+                        y2 = min(canvas_h, int(bd.get("y", 0) + bd.get("h", 0)))
+                        if x2 > x1 and y2 > y1:
+                            crop = side_img.crop((x1, y1, x2, y2))
+                            buf = io.BytesIO()
+                            crop.convert("RGB").save(buf, format="PNG")
+                            logo_image_data = base64.b64encode(buf.getvalue()).decode()
+                            print(f"[pipeline] logo cropped: {x2-x1}×{y2-y1}px")
+                        break
+
                 template = build_template_from_claude(
                     claude_layout,
                     source_file=p.name,
@@ -105,6 +126,7 @@ def process(file_path: str, output_dir: str, file_stem: str = None) -> list[dict
                     side=side_label,
                     canvas_w=canvas_w,
                     canvas_h=canvas_h,
+                    logo_image_data=logo_image_data,
                     background_color=claude_layout.get("background_color", "#ffffff"),
                 )
             else:
@@ -173,6 +195,106 @@ def process(file_path: str, output_dir: str, file_stem: str = None) -> list[dict
             })
 
     return results
+
+
+# ---------------------------------------------------------------------------
+# Phase 2 — Image chunking
+# ---------------------------------------------------------------------------
+
+_CHUNK_THRESHOLD_H = 1600  # chunk images taller than this (pixels)
+
+
+def _chunk_image(img, overlap_frac: float = 0.12):
+    """
+    Split img into top/bottom halves with overlap.
+    Returns (top_chunk, bottom_chunk, bottom_offset_y).
+    bottom_offset_y is the y-coordinate in the original image where the
+    bottom chunk starts — add this to all bottom-chunk bbox y-values when merging.
+    """
+    w, h = img.size
+    mid_y = h // 2
+    overlap_px = int(h * overlap_frac)
+    top = img.crop((0, 0, w, mid_y + overlap_px))
+    bottom_start = max(0, mid_y - overlap_px)
+    bottom = img.crop((0, bottom_start, w, h))
+    return top, bottom, bottom_start
+
+
+def _offset_layout_y(layout: dict, offset_y: float) -> dict:
+    """Return a new layout with every bbox y-coordinate shifted by offset_y."""
+    result = dict(layout)
+    shifted = []
+    for el in layout.get("elements", []):
+        el_copy = dict(el)
+        bd = dict(el.get("bbox") or {})
+        bd["y"] = bd.get("y", 0) + offset_y
+        el_copy["bbox"] = bd
+        shifted.append(el_copy)
+    result["elements"] = shifted
+    return result
+
+
+def _merge_chunk_layouts(top: dict | None, bottom: dict | None,
+                         bottom_offset_y: float) -> dict | None:
+    """Merge top/bottom chunk layouts, offsetting bottom bbox y-coordinates first."""
+    if top is None and bottom is None:
+        return None
+    if bottom is None:
+        return top
+    if top is None:
+        return _offset_layout_y(bottom, bottom_offset_y) if bottom else None
+    return merge_layouts(top, _offset_layout_y(bottom, bottom_offset_y))
+
+
+# ---------------------------------------------------------------------------
+# Phase 3 — Parallel Ensemble: Surya+SoM (Precision) || Claude Vision (Holistic)
+# ---------------------------------------------------------------------------
+
+def _run_image_ensemble(img) -> dict | None:
+    """
+    Run Surya+SoM and Claude Vision tool-use concurrently, then merge.
+    Surya provides pixel-perfect coordinates (Precision Engine).
+    Claude Vision fills in logos/separators Surya misses (Holistic Engine).
+    Falls back to dual Claude Vision if Surya is unavailable.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+
+    # Try parallel ensemble (Surya+SoM + Claude Vision)
+    with ThreadPoolExecutor(max_workers=2) as ex:
+        f_precision = ex.submit(extract_layout_surya_som, img)
+        f_holistic = ex.submit(extract_full_layout_via_tool_use, img)
+        precision = f_precision.result()
+        holistic = f_holistic.result()
+
+    if precision is not None:
+        # Surya is the text backbone — only pull logos and separators from Claude
+        # holistic to avoid text duplication from dual extraction.
+        holistic_non_text = None
+        if holistic is not None:
+            non_text = [e for e in holistic.get("elements", []) if e.get("type") != "text"]
+            holistic_non_text = {**holistic, "elements": non_text}
+        return merge_layouts(precision, holistic_non_text, math_first=True)
+
+    # Surya unavailable or returned nothing — fall back to dual Claude Vision
+    print("[pipeline] Surya unavailable — falling back to dual Claude Vision")
+    prompt_layout = extract_full_layout_via_claude(img)
+    return merge_layouts(prompt_layout, holistic)  # holistic already fetched above
+
+
+def _process_side_image(img) -> dict | None:
+    """
+    Full image extraction pipeline with automatic chunking for tall/dense menus.
+    Menus taller than _CHUNK_THRESHOLD_H are split in half (with overlap),
+    processed independently, then merged — preventing token truncation structurally.
+    """
+    _, h = img.size
+    if h > _CHUNK_THRESHOLD_H:
+        print(f"[pipeline] tall image ({h}px > {_CHUNK_THRESHOLD_H}) — chunking into halves")
+        top_chunk, bottom_chunk, bottom_offset_y = _chunk_image(img)
+        top_layout = _run_image_ensemble(top_chunk)
+        bottom_layout = _run_image_ensemble(bottom_chunk)
+        return _merge_chunk_layouts(top_layout, bottom_layout, bottom_offset_y)
+    return _run_image_ensemble(img)
 
 
 def _shift_block(block, offset_x: float):

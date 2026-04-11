@@ -167,9 +167,13 @@ def build_template_from_claude(
         except (TypeError, ValueError):
             continue
 
+        if not isinstance(raw_el, dict):
+            continue
+
         try:
             if el_type == "text":
-                sd = raw_el.get("style") or {}
+                style_raw = raw_el.get("style")
+                sd = style_raw if isinstance(style_raw, dict) else {}
                 col = min(1, max(0, int(_safe_float(raw_el.get("column"), 0))))
                 col_vals.append(col)
                 raw_subtype = raw_el.get("subtype", "other_text")
@@ -192,7 +196,8 @@ def build_template_from_claude(
                 elements.append(elem.model_dump())
 
             elif el_type == "separator":
-                sd = raw_el.get("style") or {}
+                style_raw = raw_el.get("style")
+                sd = style_raw if isinstance(style_raw, dict) else {}
                 orientation = raw_el.get("orientation", "horizontal")
                 if orientation not in ("horizontal", "vertical"):
                     orientation = "horizontal"

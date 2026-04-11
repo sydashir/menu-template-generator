@@ -1,3 +1,4 @@
+import logging
 import shutil
 import tempfile
 from pathlib import Path
@@ -6,6 +7,8 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse
+
+logger = logging.getLogger(__name__)
 
 load_dotenv()
 
@@ -46,9 +49,10 @@ async def process_menu(file: UploadFile = File(...)):
             process, tmp_path, str(OUTPUT_DIR / original_stem), original_stem
         )
     except ValueError as e:
+        logger.error("validation error processing %r: %s", file.filename, e)
         raise HTTPException(status_code=422, detail=str(e))
     except Exception as e:
-        print(f"[api] unexpected error processing {file.filename!r}: {type(e).__name__}: {e}")
+        logger.exception("unexpected error processing %r: %s: %s", file.filename, type(e).__name__, e)
         raise HTTPException(status_code=500, detail="Processing failed. Check server logs.")
     finally:
         Path(tmp_path).unlink(missing_ok=True)

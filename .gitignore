@@ -7,7 +7,6 @@ venv/
 *.egg-info/
 dist/
 build/
-outputs/
 *.psd
 .DS_Store
 Menu Template/
@@ -18,5 +17,14 @@ compare_extractors.py
 
 # Session/task notes (not source code)
 PROGRESS.md
+SESSION_NOTES.md
+SESSION_NOTES_S4.md
+plannings.md
+surya.md
 Copy of *.md
 .agents/
+*.docx
+test_images.py
+outputs_test/
+gemini_tests/
+run_gemini_tests.py

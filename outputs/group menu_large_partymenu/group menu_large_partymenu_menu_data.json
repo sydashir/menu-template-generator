@@ -1,0 +1,77 @@
+{
+  "source_file": "tmpktem2cga.png",
+  "side": "full",
+  "restaurant_name": "The Château Restaurant",
+  "tagline": null,
+  "address": null,
+  "phone": null,
+  "categories": [
+    {
+      "name": "SOUP/SALAD",
+      "column": 0,
+      "items": [
+        {
+          "name": "Chefs' farmers market greens",
+          "description": null,
+          "price": "14"
+        },
+        {
+          "name": "French onion soup au gratin",
+          "description": null,
+          "price": null
+        }
+      ]
+    },
+    {
+      "name": "APPETIZER",
+      "column": 0,
+      "items": [
+        {
+          "name": "Lamb Lolliepops",
+          "description": null,
+          "price": "20"
+        },
+        {
+          "name": "Graham Cracker Calamari",
+          "description": null,
+          "price": null
+        },
+        {
+          "name": "Beef Carpaccio",
+          "description": null,
+          "price": null
+        }
+      ]
+    },
+    {
+      "name": "ENTREE",
+      "column": 0,
+      "items": [
+        {
+          "name": "Chicken francese",
+          "description": null,
+          "price": "35"
+        },
+        {
+          "name": "Whole Bronzino",
+          "description": null,
+          "price": null
+        },
+        {
+          "name": "Truffled Wild Mushroom Ravioi",
+          "description": null,
+          "price": null
+        },
+        {
+          "name": "Chefs' prime cut of beef",
+          "description": "Upcharge of $10",
+          "price": "+10"
+        }
+      ]
+    }
+  ],
+  "logo_detected": true,
+  "num_separators": 6,
+  "num_columns": 2,
+  "layout_notes": "2-column layout, 3 sections detected via Claude vision."
+}

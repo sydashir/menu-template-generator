@@ -1,0 +1,139 @@
+{
+  "source_file": "tmp0osox_ih.jpg",
+  "side": "full",
+  "restaurant_name": "The Château Sarasota",
+  "tagline": null,
+  "address": null,
+  "phone": null,
+  "categories": [
+    {
+      "name": "Course One",
+      "column": 0,
+      "items": [
+        {
+          "name": "Soup du Jour",
+          "description": null,
+          "price": null
+        },
+        {
+          "name": "Mixed Greens Salad",
+          "description": "cucumber, tomato, onion, mustard vinaigrette",
+          "price": null
+        }
+      ]
+    },
+    {
+      "name": "Course Two",
+      "column": 0,
+      "items": [
+        {
+          "name": "Chicken Francese",
+          "description": "chicken breast scallopini, aged parmesan basil egg-crust, roasted fingerling potatoes, house vegetable",
+          "price": null
+        },
+        {
+          "name": "Poisson du Jour",
+          "description": "fish of the day",
+          "price": null
+        },
+        {
+          "name": "Steak Frites",
+          "description": "skirt steak, compound butter, truffle parmesan pommes frites (served medium + temp)",
+          "price": null
+        },
+        {
+          "name": "New Zealand Lamb Lollipops",
+          "description": "hoisin glaze, sriracha, chilled soba noodles, cashew butter",
+          "price": null
+        },
+        {
+          "name": "Vegetable Risotto",
+          "description": "chef's choice of the day. add: grilled chicken +$8 shrimp +$12 lobster tail +$20",
+          "price": null
+        }
+      ]
+    },
+    {
+      "name": "Course Three",
+      "column": 0,
+      "items": [
+        {
+          "name": "Ice Cream",
+          "description": "Vanilla or Chocolate",
+          "price": null
+        }
+      ]
+    },
+    {
+      "name": "Wines by the Glass",
+      "column": 0,
+      "items": [
+        {
+          "name": "Bordeaux blanc",
+          "description": null,
+          "price": "7.00"
+        },
+        {
+          "name": "Rouge",
+          "description": null,
+          "price": "7.00"
+        },
+        {
+          "name": "Pinot Grigio",
+          "description": null,
+          "price": "7.00"
+        },
+        {
+          "name": "Chardonnay",
+          "description": null,
+          "price": "7.00"
+        },
+        {
+          "name": "Cabernet Sauvignon",
+          "description": null,
+          "price": "7.00"
+        },
+        {
+          "name": "Malbec",
+          "description": null,
+          "price": "7.00"
+        }
+      ]
+    },
+    {
+      "name": "Enjoy More",
+      "column": 0,
+      "items": [
+        {
+          "name": "Shrimp Cocktail",
+          "description": null,
+          "price": "15"
+        },
+        {
+          "name": "Small Charcuterie Board",
+          "description": null,
+          "price": "20"
+        },
+        {
+          "name": "Beef Carpaccio",
+          "description": null,
+          "price": "19"
+        },
+        {
+          "name": "Tuna Tartare",
+          "description": null,
+          "price": "20"
+        },
+        {
+          "name": "Additional Bread Service",
+          "description": null,
+          "price": "4"
+        }
+      ]
+    }
+  ],
+  "logo_detected": true,
+  "num_separators": 5,
+  "num_columns": 2,
+  "layout_notes": "2-column layout, 5 sections detected via Claude vision."
+}

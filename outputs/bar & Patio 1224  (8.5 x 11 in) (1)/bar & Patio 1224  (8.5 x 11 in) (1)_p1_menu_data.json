@@ -1,0 +1,107 @@
+{
+  "source_file": "tmpgwa5m9sq.pdf",
+  "side": "full",
+  "restaurant_name": "Patio & Bar Menu",
+  "tagline": null,
+  "address": "maine lobster, cream alfredo, chives, white cheddar",
+  "phone": null,
+  "categories": [
+    {
+      "name": "Starters",
+      "column": 1,
+      "items": [
+        {
+          "name": "CHATEAU WINGS",
+          "description": null,
+          "price": "16"
+        },
+        {
+          "name": "SHRIMP COCKTAIL*",
+          "description": "choice: buffalo, bbq, or garlic parmesan",
+          "price": "17"
+        },
+        {
+          "name": "BEEF CARPACCIO*",
+          "description": null,
+          "price": "21"
+        },
+        {
+          "name": "CHICKEN TENDERS",
+          "description": null,
+          "price": "14"
+        },
+        {
+          "name": "MOZZARELLA STICKS",
+          "description": null,
+          "price": "10"
+        },
+        {
+          "name": "NEW ZEALAND LAMB LOLLIPOPS",
+          "description": "hoisin glaze, chilled soba noodles, cashew butter",
+          "price": "21"
+        },
+        {
+          "name": "ONION RINGS",
+          "description": null,
+          "price": "8"
+        },
+        {
+          "name": "COCONUT CRUNCHY SHRIMP*",
+          "description": "hand breaded jumbo shrimp, sweet chili sauce",
+          "price": "18"
+        },
+        {
+          "name": "TRUFFLE",
+          "description": null,
+          "price": null
+        },
+        {
+          "name": "FRIES",
+          "description": null,
+          "price": "14/7"
+        }
+      ]
+    },
+    {
+      "name": "Soup",
+      "column": 1,
+      "items": [
+        {
+          "name": "FRENCH ONION SOUP",
+          "description": null,
+          "price": null
+        },
+        {
+          "name": "CUP 11 / BOWL",
+          "description": null,
+          "price": "13"
+        }
+      ]
+    },
+    {
+      "name": "Pizza",
+      "column": 1,
+      "items": [
+        {
+          "name": "DAILY",
+          "description": null,
+          "price": null
+        },
+        {
+          "name": "3 - 5  P M",
+          "description": "mozzarella, fresh tomatoes, fresh basil",
+          "price": null
+        },
+        {
+          "name": "941. 238. 6264   ~   WWW.CHATEAURESTAURANTS.COM",
+          "description": null,
+          "price": null
+        }
+      ]
+    }
+  ],
+  "logo_detected": false,
+  "num_separators": 11,
+  "num_columns": 2,
+  "layout_notes": "2-column layout, 3 sections detected."
+}
