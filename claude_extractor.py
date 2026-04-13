@@ -502,17 +502,20 @@ _TOP_HINTS = {"top_center", "top_left", "top_right"}
 
 def _enforce_single_logo(elements: list) -> list:
     """
-    A menu page has exactly one logo. If multiple logo elements are present,
-    keep the one with a top-position hint (top_left/top_center/top_right) or
-    the one with the largest bbox area. All others are reclassified as
-    separator/ornament — they are typically ornamental line clusters near the
-    logo that Claude misidentifies as a second logo.
+    Merge multiple detected logo elements into a single logo with a union
+    bounding box. Claude often fragments a complex logo (emblem + decorative
+    frame + brand text graphic) into 2-3 separate logo elements. Rather than
+    discarding the extras, compute the bbox that covers all nearby fragments
+    so the full visual logo region is preserved as one entity.
+
+    Fragments within 2x the anchor logo's largest dimension are merged.
+    Truly distant logos (rare multi-logo menus) are reclassified as ornaments.
     """
     logos = [(i, e) for i, e in enumerate(elements) if e.get("type") == "logo"]
     if len(logos) <= 1:
         return elements
 
-    # Score each logo: prefer top-positioned hint, then larger area
+    # Anchor = top-positioned or largest area
     def _logo_score(idx_el):
         _, el = idx_el
         hint = (el.get("position_hint") or "").lower()
@@ -520,23 +523,63 @@ def _enforce_single_logo(elements: list) -> list:
         area = bd.get("w", 0) * bd.get("h", 0)
         return (1 if hint in _TOP_HINTS else 0, area)
 
-    logos_sorted = sorted(logos, key=_logo_score, reverse=True)
-    keep_idx = logos_sorted[0][0]
+    anchor_idx, anchor_logo = sorted(logos, key=_logo_score, reverse=True)[0]
+    anchor_bd = anchor_logo.get("bbox") or {}
+    anchor_size = max(anchor_bd.get("w", 100), anchor_bd.get("h", 100))
+    proximity_threshold = anchor_size * 2.0
+    anchor_cx = anchor_bd.get("x", 0) + anchor_bd.get("w", 0) / 2
+    anchor_cy = anchor_bd.get("y", 0) + anchor_bd.get("h", 0) / 2
+
+    # Grow union bbox to include all nearby fragments
+    union_x1 = anchor_bd.get("x", 0)
+    union_y1 = anchor_bd.get("y", 0)
+    union_x2 = union_x1 + anchor_bd.get("w", 0)
+    union_y2 = union_y1 + anchor_bd.get("h", 0)
+    merged_indices = {anchor_idx}
+
+    for i, el in logos:
+        if i == anchor_idx:
+            continue
+        bd = el.get("bbox") or {}
+        cx = bd.get("x", 0) + bd.get("w", 0) / 2
+        cy = bd.get("y", 0) + bd.get("h", 0) / 2
+        dist = ((cx - anchor_cx) ** 2 + (cy - anchor_cy) ** 2) ** 0.5
+        if dist <= proximity_threshold:
+            merged_indices.add(i)
+            union_x1 = min(union_x1, bd.get("x", 0))
+            union_y1 = min(union_y1, bd.get("y", 0))
+            union_x2 = max(union_x2, bd.get("x", 0) + bd.get("w", 0))
+            union_y2 = max(union_y2, bd.get("y", 0) + bd.get("h", 0))
+
+    # Position hint from topmost fragment (most accurate for placement)
+    topmost = min(
+        ((i, e) for i, e in logos if i in merged_indices),
+        key=lambda x: (x[1].get("bbox") or {}).get("y", 0),
+    )[1]
 
     result = []
+    logo_inserted = False
     for i, el in enumerate(elements):
-        if el.get("type") == "logo" and i != keep_idx:
-            # Reclassify as separator/ornament
+        if el.get("type") != "logo":
+            result.append(el)
+        elif i in merged_indices:
+            if not logo_inserted:
+                merged_logo = dict(anchor_logo)
+                merged_logo["bbox"] = {
+                    "x": union_x1, "y": union_y1,
+                    "w": union_x2 - union_x1, "h": union_y2 - union_y1,
+                }
+                merged_logo["position_hint"] = topmost.get("position_hint", "top_center")
+                result.append(merged_logo)
+                logo_inserted = True
+        else:
+            # Distant logo — reclassify as ornament (truly separate graphical element)
             bd = el.get("bbox") or {}
             result.append({
-                "type": "separator",
-                "subtype": "ornament",
-                "orientation": "horizontal",
-                "bbox": bd,
+                "type": "separator", "subtype": "ornament",
+                "orientation": "horizontal", "bbox": bd,
                 "style": {"color": "#000000", "stroke_width": 1.5, "stroke_style": "solid"},
             })
-        else:
-            result.append(el)
     return result
 
 
@@ -546,7 +589,7 @@ Your job is to LABEL the OCR blocks semantically and identify elements OCR misse
 
 Rules:
 - background_color: dominant background as #rrggbb
-- logo_bbox: restaurant logo graphic/emblem at top of page. Pixel bbox (tight around the image/emblem only, NOT the restaurant name text).
+- logo_bbox: full visual logo region — include the emblem, surrounding decorative border/frame, crest, and any graphical elements visually part of the logo identity. Pixel bbox that encompasses the entire logo as one visual unit (do NOT crop tightly to just the inner graphic).
 - ocr_labels: assign a subtype + column + font_family to EVERY block ID in the list. Do NOT skip any.
   - corrected_text: if the OCR text is wrong (common with cursive/decorative fonts — e.g. "Talls" instead of "Wines by the glass"), provide the correct reading. null if the OCR text is correct.
 - font_family choices: "decorative-script" for cursive/handwritten, "serif" for classic serif, "sans-serif" for modern clean, "display" for large non-script decorative.
@@ -805,17 +848,18 @@ def extract_layout_surya_som(img: Image.Image) -> dict | None:
         print("[surya_som] too few blocks — skipping")
         return None
 
-    # Annotate image with SoM boxes before sending to Claude
-    annotated = _draw_som_annotations(img, surya_blocks)
-
+    # Send the clean (un-annotated) original image so Claude can see decorative/script
+    # section headers without colored SoM boxes obscuring them. The block list with
+    # text content + position percentages gives Claude sufficient context to label
+    # each block without needing visual bounding boxes drawn on the image.
     orig_w, orig_h = img.size
-    send_img = annotated
+    send_img = img
     scale_x = scale_y = 1.0
     if max(orig_w, orig_h) > _MAX_IMG_DIM:
         ratio = _MAX_IMG_DIM / max(orig_w, orig_h)
         new_w = max(1, int(orig_w * ratio))
         new_h = max(1, int(orig_h * ratio))
-        send_img = annotated.resize((new_w, new_h), Image.LANCZOS)
+        send_img = img.resize((new_w, new_h), Image.LANCZOS)
         scale_x = orig_w / new_w
         scale_y = orig_h / new_h
 
@@ -835,16 +879,19 @@ def extract_layout_surya_som(img: Image.Image) -> dict | None:
 
     sw, sh = send_img.size
     user_msg = (
-        f"Menu image: {sw}×{sh}px. Numbered bounding boxes are drawn on the image.\n\n"
-        f"OCR blocks ({len(surya_blocks)}):\n{block_list}\n\n"
-        "Label every block by its ID number. Add decorative_elements for any cursive/script "
-        "headings visible in the image that the OCR boxes did not capture."
+        f"Menu image: {sw}×{sh}px.\n\n"
+        f"OCR blocks ({len(surya_blocks)}) — locate each by its text content and position:\n"
+        f"{block_list}\n\n"
+        "1. Label every block by its ID number (subtype, column, font_family, corrected_text if OCR misread).\n"
+        "2. Add decorative_elements for any cursive/script/handwritten text visible in the image "
+        "that is NOT represented in the block list above (entire sections written in calligraphy, "
+        "chalk-style headers, hand-lettered category names, etc.)."
     )
 
     try:
         response = client.messages.create(
             model="claude-opus-4-6",
-            max_tokens=8192,
+            max_tokens=16384,
             system=_HYBRID_SYSTEM_PROMPT,
             tools=[_HYBRID_TOOL_SCHEMA],
             tool_choice={"type": "tool", "name": "label_menu_layout"},
@@ -936,7 +983,12 @@ def extract_layout_surya_som(img: Image.Image) -> dict | None:
         if scale_x != 1.0 or scale_y != 1.0:
             lb = {"x": lb.get("x", 0) * scale_x, "y": lb.get("y", 0) * scale_y,
                   "w": lb.get("w", 0) * scale_x,  "h": lb.get("h", 0) * scale_y}
-        elements.append({"type": "logo", "bbox": lb, "position_hint": "top_center"})
+        # Infer position_hint from actual bbox position rather than hardcoding top_center
+        _lb_cx = lb.get("x", 0) + lb.get("w", 0) / 2
+        _lb_y  = lb.get("y", 0)
+        _py = "top" if _lb_y < orig_h * 0.4 else ("middle" if _lb_y < orig_h * 0.7 else "bottom")
+        _px = "left" if _lb_cx < orig_w * 0.35 else ("right" if _lb_cx > orig_w * 0.65 else "center")
+        elements.append({"type": "logo", "bbox": lb, "position_hint": f"{_py}_{_px}"})
 
     print(f"[surya_som] built {len(elements)} elements "
           f"(ocr={len(surya_blocks)}, decorative={len(data.get('decorative_elements', []))})")
@@ -945,6 +997,70 @@ def extract_layout_surya_som(img: Image.Image) -> dict | None:
         "menu_data": data.get("menu_data", {}),
         "background_color": data.get("background_color", "#ffffff"),
     }
+
+
+def _dedup_separators(elements: list) -> list:
+    """
+    Deduplicate separator elements using proximity rather than IoU.
+    IoU fails for thin lines — a 2px separator shifted by 4px from JPEG/resize
+    artifacts has IoU=0 and both copies survive the merge. This function treats
+    two separators as duplicates when:
+      - Same orientation
+      - Perpendicular-axis centers within max(1.5 * thickness, 12) px
+      - >= 60% parallel-axis overlap
+    Keeps the one with the greater span (length or thickness).
+    Non-separator elements pass through unchanged.
+    """
+    seps, non_seps = [], []
+    for el in elements:
+        (seps if el.get("type") == "separator" else non_seps).append(el)
+
+    kept: list = []
+    for sep in seps:
+        bd = sep.get("bbox") or {}
+        orient = sep.get("orientation", "horizontal")
+        is_dup = False
+
+        for j, ks in enumerate(kept):
+            kd = ks.get("bbox") or {}
+            if ks.get("orientation") != orient:
+                continue
+
+            if orient == "horizontal":
+                perp_tol = max(1.5 * max(bd.get("h", 1), 1), 12)
+                cy  = bd.get("y", 0) + bd.get("h", 0) / 2
+                kcy = kd.get("y", 0) + kd.get("h", 0) / 2
+                if abs(cy - kcy) > perp_tol:
+                    continue
+                x1, x2   = bd.get("x", 0), bd.get("x", 0) + bd.get("w", 0)
+                kx1, kx2  = kd.get("x", 0), kd.get("x", 0) + kd.get("w", 0)
+                overlap   = max(0.0, min(x2, kx2) - max(x1, kx1))
+                min_span  = min(bd.get("w", 1), kd.get("w", 1))
+                if overlap / max(min_span, 1) >= 0.6:
+                    is_dup = True
+                    if bd.get("w", 0) > kd.get("w", 0):
+                        kept[j] = sep
+                    break
+            else:  # vertical
+                perp_tol = max(1.5 * max(bd.get("w", 1), 1), 12)
+                cx  = bd.get("x", 0) + bd.get("w", 0) / 2
+                kcx = kd.get("x", 0) + kd.get("w", 0) / 2
+                if abs(cx - kcx) > perp_tol:
+                    continue
+                y1, y2   = bd.get("y", 0), bd.get("y", 0) + bd.get("h", 0)
+                ky1, ky2  = kd.get("y", 0), kd.get("y", 0) + kd.get("h", 0)
+                overlap   = max(0.0, min(y2, ky2) - max(y1, ky1))
+                min_span  = min(bd.get("h", 1), kd.get("h", 1))
+                if overlap / max(min_span, 1) >= 0.6:
+                    is_dup = True
+                    if bd.get("h", 0) > kd.get("h", 0):
+                        kept[j] = sep
+                    break
+
+        if not is_dup:
+            kept.append(sep)
+
+    return non_seps + kept
 
 
 def merge_layouts(primary: dict | None, secondary: dict | None,
@@ -1011,9 +1127,12 @@ def merge_layouts(primary: dict | None, secondary: dict | None,
     # Content-based dedup: if two text elements share content+subtype, keep the larger bbox
     merged = _dedup_text_elements(merged)
 
-    # Logo cap: a menu page has exactly one logo. Keep the first top-positioned logo;
-    # reclassify any additional logos as separator/ornament (they're typically ornamental
-    # line groupings near the logo that Claude misidentifies as a second logo).
+    # Proximity-based separator dedup: catches near-duplicate thin lines from parallel
+    # extraction passes that IoU alone misses (2px shift → IoU=0 but same visual line).
+    merged = _dedup_separators(merged)
+
+    # Logo union: merge nearby logo fragments into a single union bbox rather than
+    # discarding — Claude often splits a complex logo (emblem + frame) into parts.
     merged = _enforce_single_logo(merged)
 
     return {"elements": merged, "menu_data": menu_data, "background_color": background_color}

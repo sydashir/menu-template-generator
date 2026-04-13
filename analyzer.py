@@ -98,6 +98,17 @@ def _classify(b: RawBlock, max_font: float, header_zone: float, restaurant_assig
     stripped = re.sub(r"[\s$/.,\-\d]", "", text)
     is_upper_content = len(stripped) > 0 and stripped.isupper()
 
+    # Secondary header check: medium font (55-75%) + bold + ALL CAPS + no inline price.
+    # Catches category headers that use a smaller font than the restaurant name
+    # (e.g. name=36pt, headers=22pt → ratio=0.61, missed by the 0.75 threshold above).
+    # Guards: no price tail (avoids "SALMON 28"), text > 3 chars (avoids initials).
+    if (0.55 <= font_ratio < 0.75
+            and b.is_bold
+            and is_upper_content
+            and len(text) > 3
+            and not PRICE_TAIL_RE.search(text)):
+        return "category_header"
+
     if b.is_bold and is_upper_content:
         return "item_name"
 

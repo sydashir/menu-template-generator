@@ -78,6 +78,33 @@ def process(file_path: str, output_dir: str, file_stem: str = None) -> list[dict
             logo_info = None
             if ext in SUPPORTED_PDF and side_label in ("full", "front"):
                 logo_info = detect_logo_pdf(file_path, page_idx)
+                # If no embedded image found, the logo may be vector-drawn.
+                # Run Surya+SoM on the rendered page to detect it visually.
+                if logo_info is None:
+                    print("[pipeline] PDF: no embedded logo found — probing render for vector logo")
+                    _pdf_vision = _process_side_image(side_img)
+                    if _pdf_vision is not None:
+                        _logo_el = next(
+                            (e for e in _pdf_vision.get("elements", []) if e.get("type") == "logo"),
+                            None,
+                        )
+                        if _logo_el:
+                            bd = _logo_el.get("bbox") or {}
+                            x1 = max(0, int(bd.get("x", 0)))
+                            y1 = max(0, int(bd.get("y", 0)))
+                            x2 = min(canvas_w, int(bd.get("x", 0) + bd.get("w", 0)))
+                            y2 = min(canvas_h, int(bd.get("y", 0) + bd.get("h", 0)))
+                            if x2 > x1 and y2 > y1:
+                                crop = side_img.crop((x1, y1, x2, y2))
+                                buf = io.BytesIO()
+                                crop.convert("RGB").save(buf, format="PNG")
+                                logo_info = {
+                                    "x": float(x1), "y": float(y1),
+                                    "w": float(x2 - x1), "h": float(y2 - y1),
+                                    "image_bytes": buf.getvalue(),
+                                    "ext": "png",
+                                }
+                                print(f"[pipeline] PDF vector logo recovered via Vision: {x2-x1}×{y2-y1}px")
 
             # --- build outputs ---
             stem = file_stem or p.stem

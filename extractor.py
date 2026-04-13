@@ -71,7 +71,9 @@ def extract_blocks_pdf(file_path: str) -> List[List[RawBlock]]:
                         w=(r[2] - r[0]) * scale,
                         h=(r[3] - r[1]) * scale,
                         font_size=span["size"] * scale,
-                        is_bold="Bold" in span["font"] or "bold" in span["font"],
+                        is_bold=(bool(span.get("flags", 0) & 16)
+                             or bool(re.search(r'bold|black|heavy|demi|semibold|extrabold',
+                                               span["font"], re.I))),
                         is_italic="Italic" in span["font"] or "italic" in span["font"],
                         page=page_idx,
                         source="pdf",
