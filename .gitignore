@@ -26,5 +26,6 @@ Copy of *.md
 *.docx
 test_images.py
 outputs_test/
+outputs/
 gemini_tests/
 run_gemini_tests.py
