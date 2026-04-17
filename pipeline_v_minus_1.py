@@ -9,7 +9,6 @@ import json
 from pathlib import Path
 from typing import Optional
 
-from PIL import Image
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -27,7 +26,6 @@ from claude_extractor import (
     extract_full_layout_via_tool_use,
     extract_layout_surya_som,
     merge_layouts,
-    _mask_logo_elements,
 )
 
 SUPPORTED_PDF = {".pdf"}
@@ -80,33 +78,6 @@ def process(file_path: str, output_dir: str, file_stem: str = None) -> list[dict
             logo_info = None
             if ext in SUPPORTED_PDF and side_label in ("full", "front"):
                 logo_info = detect_logo_pdf(file_path, page_idx)
-                # If no embedded image found, the logo may be vector-drawn.
-                # Run Surya+SoM on the rendered page to detect it visually.
-                if logo_info is None:
-                    print("[pipeline] PDF: no embedded logo found — probing render for vector logo")
-                    _pdf_vision = _process_side_image(side_img)
-                    if _pdf_vision is not None:
-                        _logo_el = next(
-                            (e for e in _pdf_vision.get("elements", []) if e.get("type") == "logo"),
-                            None,
-                        )
-                        if _logo_el:
-                            bd = _logo_el.get("bbox") or {}
-                            x1 = max(0, int(bd.get("x", 0)))
-                            y1 = max(0, int(bd.get("y", 0)))
-                            x2 = min(canvas_w, int(bd.get("x", 0) + bd.get("w", 0)))
-                            y2 = min(canvas_h, int(bd.get("y", 0) + bd.get("h", 0)))
-                            if x2 > x1 and y2 > y1:
-                                crop = side_img.crop((x1, y1, x2, y2))
-                                buf = io.BytesIO()
-                                crop.convert("RGB").save(buf, format="PNG")
-                                logo_info = {
-                                    "x": float(x1), "y": float(y1),
-                                    "w": float(x2 - x1), "h": float(y2 - y1),
-                                    "image_bytes": buf.getvalue(),
-                                    "ext": "png",
-                                }
-                                print(f"[pipeline] PDF vector logo recovered via Vision: {x2-x1}×{y2-y1}px")
 
             # --- build outputs ---
             stem = file_stem or p.stem
@@ -115,25 +86,8 @@ def process(file_path: str, output_dir: str, file_stem: str = None) -> list[dict
             base_name = f"{stem}{suffix}{side_suffix}"
 
             if claude_layout is not None:
-                # Claude Vision succeeded — use its spatial data directly for text/logos.
-                # Use OpenCV detect_separators for EXACT separator coordinates, ignoring Claude's.
-                img_lines = detect_separators(side_img)
-                # Filter out Claude's hallucinated separators
-                elements = [e for e in claude_layout.get("elements", []) if e.get("type") != "separator"]
-                # Convert OpenCV lines to standard separator elements and append
-                for ln in img_lines:
-                    x1, y1 = min(ln.x1, ln.x2), min(ln.y1, ln.y2)
-                    w = abs(ln.x2 - ln.x1) if ln.orientation == "horizontal" else max(2.0, abs(ln.x2 - ln.x1))
-                    h = abs(ln.y2 - ln.y1) if ln.orientation == "vertical" else max(2.0, abs(ln.y2 - ln.y1))
-                    elements.append({
-                        "type": "separator",
-                        "subtype": "horizontal_line" if ln.orientation == "horizontal" else "vertical_line",
-                        "orientation": ln.orientation,
-                        "bbox": {"x": float(x1), "y": float(y1), "w": float(w), "h": float(h)},
-                        "style": {"color": "#000000", "stroke_width": float(h if ln.orientation == "horizontal" else w), "stroke_style": "solid"},
-                    })
-                claude_layout["elements"] = elements
-
+                # Claude Vision succeeded — use its spatial data directly, skip OCR
+                elements = claude_layout.get("elements", [])
                 num_cols = max(
                     (el.get("column", 0) for el in elements if el.get("type") == "text"),
                     default=0,
@@ -247,7 +201,7 @@ def process(file_path: str, output_dir: str, file_stem: str = None) -> list[dict
 # Phase 2 — Image chunking
 # ---------------------------------------------------------------------------
 
-_CHUNK_THRESHOLD_H = 3000  # chunk images taller than this (pixels) — increased to preserve context
+_CHUNK_THRESHOLD_H = 1600  # chunk images taller than this (pixels)
 
 
 def _chunk_image(img, overlap_frac: float = 0.12):
@@ -313,10 +267,13 @@ def _run_image_ensemble(img) -> dict | None:
         holistic = f_holistic.result()
 
     if precision is not None:
-        # Surya is the text backbone, but we allow Claude's holistic pass to fill in
-        # text that Surya missed (e.g. script fonts, decorative headers).
-        # deduplication in merge_layouts will prevent overlaps.
-        return merge_layouts(precision, holistic, math_first=True)
+        # Surya is the text backbone — only pull logos and separators from Claude
+        # holistic to avoid text duplication from dual extraction.
+        holistic_non_text = None
+        if holistic is not None:
+            non_text = [e for e in holistic.get("elements", []) if e.get("type") != "text"]
+            holistic_non_text = {**holistic, "elements": non_text}
+        return merge_layouts(precision, holistic_non_text, math_first=True)
 
     # Surya unavailable or returned nothing — fall back to dual Claude Vision
     print("[pipeline] Surya unavailable — falling back to dual Claude Vision")
@@ -326,47 +283,18 @@ def _run_image_ensemble(img) -> dict | None:
 
 def _process_side_image(img) -> dict | None:
     """
-    Full image extraction pipeline with automatic chunking and upscaling.
-    Upscales very small images to ensure text is legible for OCR.
-    Scales all bounding boxes back to original dimensions for pixel-perfect alignment.
+    Full image extraction pipeline with automatic chunking for tall/dense menus.
+    Menus taller than _CHUNK_THRESHOLD_H are split in half (with overlap),
+    processed independently, then merged — preventing token truncation structurally.
     """
-    orig_w, orig_h = img.size
-    
-    # Only upscale if image is too small for reliable OCR (<1600px height).
-    # Target 2400px height as a moderate, non-aggressive upscale.
-    upscaled_img = img
-    scale = 1.0
-    if orig_h < 1600:
-        scale = 2400 / orig_h
-        new_w, new_h = int(orig_w * scale), int(orig_h * scale)
-        print(f"[pipeline] upscaling small image from {orig_h}px to {new_h}px for legibility")
-        upscaled_img = img.resize((new_w, new_h), Image.LANCZOS)
-        
-    _, h = upscaled_img.size
-
-    layout = None
+    _, h = img.size
     if h > _CHUNK_THRESHOLD_H:
         print(f"[pipeline] tall image ({h}px > {_CHUNK_THRESHOLD_H}) — chunking into halves")
-        top_chunk, bottom_chunk, bottom_offset_y = _chunk_image(upscaled_img)
+        top_chunk, bottom_chunk, bottom_offset_y = _chunk_image(img)
         top_layout = _run_image_ensemble(top_chunk)
         bottom_layout = _run_image_ensemble(bottom_chunk)
-        layout = _merge_chunk_layouts(top_layout, bottom_layout, bottom_offset_y)
-    else:
-        layout = _run_image_ensemble(upscaled_img)
-
-    # Scale ALL bboxes back to original image dimensions
-    if layout and scale != 1.0:
-        inv_scale = 1.0 / scale
-        for el in layout.get("elements", []):
-            bd = el.get("bbox")
-            if bd:
-                bd["x"] = bd.get("x", 0) * inv_scale
-                bd["y"] = bd.get("y", 0) * inv_scale
-                bd["w"] = bd.get("w", 0) * inv_scale
-                bd["h"] = bd.get("h", 0) * inv_scale
-        # Scale background_color if it was a sampling coordinate (it's not, it's hex)
-        
-    return layout
+        return _merge_chunk_layouts(top_layout, bottom_layout, bottom_offset_y)
+    return _run_image_ensemble(img)
 
 
 def _shift_block(block, offset_x: float):

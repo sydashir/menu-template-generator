@@ -24,9 +24,9 @@ def detect_separators(img: Image.Image) -> List[RawLine]:
 
 def _detect_direction(binary: np.ndarray, w: int, h: int, direction: str) -> List[RawLine]:
     if direction == "horizontal":
-        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (max(w // 10, 40), 1))
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (max(w // 35, 25), 1))
     else:
-        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (1, max(h // 10, 40)))
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (1, max(h // 35, 25)))
 
     mask = cv2.morphologyEx(binary, cv2.MORPH_OPEN, kernel)
     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
@@ -36,7 +36,7 @@ def _detect_direction(binary: np.ndarray, w: int, h: int, direction: str) -> Lis
         x, y, cw, ch = cv2.boundingRect(cnt)
 
         if direction == "horizontal":
-            if cw < w * 0.10:  # skip very short fragments (lowered from 20% to 10%)
+            if cw < w * 0.04:  # calibrated threshold (down from 6%, above the 3% noise floor)
                 continue
             results.append(RawLine(
                 x1=float(x), y1=float(y),
@@ -44,7 +44,7 @@ def _detect_direction(binary: np.ndarray, w: int, h: int, direction: str) -> Lis
                 orientation="horizontal",
             ))
         else:
-            if ch < h * 0.08:  # skip very short vertical fragments
+            if ch < h * 0.04:  # calibrated vertical threshold
                 continue
             results.append(RawLine(
                 x1=float(x), y1=float(y),
