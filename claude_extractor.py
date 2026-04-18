@@ -789,7 +789,7 @@ def _load_surya_models() -> bool:
             from surya.recognition import RecognitionPredictor
             print("[surya] loading models (first run — may download ~1 GB)…")
             _surya_det_predictor = DetectionPredictor()
-            _surya_rec_predictor = RecognitionPredictor()
+            _surya_rec_predictor = RecognitionPredictor(_surya_det_predictor)
             _surya_api_version = "new"
             print("[surya] models ready (API v0.17+)")
             return True
