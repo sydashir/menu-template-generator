@@ -57,6 +57,7 @@ class RawLine(BaseModel):
     x2: float
     y2: float
     orientation: Literal["horizontal", "vertical"] = "horizontal"
+    subtype: Optional[str] = None  # e.g. "border" for detected rectangular boxes
 
 
 class TextElement(BaseModel):

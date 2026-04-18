@@ -23,7 +23,6 @@ from analyzer import detect_columns, classify_blocks, build_menu_data
 from builder import build_template, build_template_from_claude
 from claude_extractor import (
     build_menu_data_from_claude,
-    extract_full_layout_via_claude,
     extract_full_layout_via_tool_use,
     extract_layout_surya_som,
     merge_layouts,
@@ -118,20 +117,33 @@ def process(file_path: str, output_dir: str, file_stem: str = None) -> list[dict
                 # Claude Vision succeeded — use its spatial data directly for text/logos.
                 # Use OpenCV detect_separators for EXACT separator coordinates, ignoring Claude's.
                 img_lines = detect_separators(side_img)
-                # Filter out Claude's hallucinated separators
+                # Filter out Claude's separator elements — OpenCV gives exact coordinates
                 elements = [e for e in claude_layout.get("elements", []) if e.get("type") != "separator"]
                 # Convert OpenCV lines to standard separator elements and append
                 for ln in img_lines:
                     x1, y1 = min(ln.x1, ln.x2), min(ln.y1, ln.y2)
-                    w = abs(ln.x2 - ln.x1) if ln.orientation == "horizontal" else max(2.0, abs(ln.x2 - ln.x1))
-                    h = abs(ln.y2 - ln.y1) if ln.orientation == "vertical" else max(2.0, abs(ln.y2 - ln.y1))
-                    elements.append({
-                        "type": "separator",
-                        "subtype": "horizontal_line" if ln.orientation == "horizontal" else "vertical_line",
-                        "orientation": ln.orientation,
-                        "bbox": {"x": float(x1), "y": float(y1), "w": float(w), "h": float(h)},
-                        "style": {"color": "#000000", "stroke_width": float(h if ln.orientation == "horizontal" else w), "stroke_style": "solid"},
-                    })
+                    if ln.subtype == "border":
+                        # Detected as a closed rectangle — output as a border element
+                        # with full w×h so the renderer can draw a box outline
+                        bw = abs(ln.x2 - ln.x1)
+                        bh = abs(ln.y2 - ln.y1)
+                        elements.append({
+                            "type": "separator",
+                            "subtype": "border",
+                            "orientation": "horizontal",
+                            "bbox": {"x": float(x1), "y": float(y1), "w": float(bw), "h": float(bh)},
+                            "style": {"color": "#000000", "stroke_width": 1.5, "stroke_style": "solid"},
+                        })
+                    else:
+                        lw = abs(ln.x2 - ln.x1) if ln.orientation == "horizontal" else max(2.0, abs(ln.x2 - ln.x1))
+                        lh = abs(ln.y2 - ln.y1) if ln.orientation == "vertical" else max(2.0, abs(ln.y2 - ln.y1))
+                        elements.append({
+                            "type": "separator",
+                            "subtype": "horizontal_line" if ln.orientation == "horizontal" else "vertical_line",
+                            "orientation": ln.orientation,
+                            "bbox": {"x": float(x1), "y": float(y1), "w": float(lw), "h": float(lh)},
+                            "style": {"color": "#000000", "stroke_width": float(lh if ln.orientation == "horizontal" else lw), "stroke_style": "solid"},
+                        })
                 claude_layout["elements"] = elements
 
                 num_cols = max(
@@ -153,10 +165,50 @@ def process(file_path: str, output_dir: str, file_stem: str = None) -> list[dict
                 for el in elements:
                     if el.get("type") == "logo":
                         bd = el.get("bbox") or {}
-                        x1 = max(0, int(bd.get("x", 0)))
-                        y1 = max(0, int(bd.get("y", 0)))
-                        x2 = min(canvas_w, int(bd.get("x", 0) + bd.get("w", 0)))
-                        y2 = min(canvas_h, int(bd.get("y", 0) + bd.get("h", 0)))
+                        ex, ey, ew, eh = bd.get("x", 0), bd.get("y", 0), bd.get("w", 0), bd.get("h", 0)
+                        logo_bottom = ey + eh
+                        logo_right = ex + ew
+
+                        # --- Smart Height Extension ---
+                        # Find nearest element directly below logo_bottom, stop 5px before it.
+                        next_below_y = float("inf")
+                        for other_el in elements:
+                            if other_el is el: continue
+                            obd = other_el.get("bbox") or {}
+                            oy = float(obd.get("y", 0))
+                            if oy > logo_bottom:
+                                next_below_y = min(next_below_y, oy)
+
+                        max_extra_h = min(int(eh * 0.20), 60)
+                        avail_h = max(0, int(next_below_y) - int(logo_bottom) - 5) if next_below_y < float("inf") else max_extra_h
+                        extra_h = min(max_extra_h, avail_h)
+                        eh_ext = eh + extra_h
+
+                        # --- Smart Width Extension (y-band aware) ---
+                        # Only consider elements that vertically overlap the logo y-range as constraints.
+                        next_right_in_band = float("inf")
+                        for other_el in elements:
+                            if other_el is el: continue
+                            obd = other_el.get("bbox") or {}
+                            ox, oy, oh = float(obd.get("x", 0)), float(obd.get("y", 0)), float(obd.get("h", 1))
+                            if ox > logo_right and oy < (ey + eh_ext) and (oy + oh) > ey:
+                                next_right_in_band = min(next_right_in_band, ox)
+
+                        max_extra_w = int(ew * 1.80)
+                        if next_right_in_band < float("inf"):
+                            avail_w = max(0, int(next_right_in_band) - int(logo_right) - 5)
+                            extra_w = min(max_extra_w, avail_w)
+                        else:
+                            extra_w = min(max_extra_w, max(0, canvas_w // 2 - int(logo_right)))
+
+                        ew_ext = min(ew + extra_w, canvas_w - ex)
+                        
+                        # Update original bbox for the template
+                        bd["w"], bd["h"] = float(ew_ext), float(eh_ext)
+
+                        x1, y1 = max(0, int(ex)), max(0, int(ey))
+                        x2, y2 = min(canvas_w, int(ex + ew_ext)), min(canvas_h, int(ey + eh_ext))
+                        
                         if x2 > x1 and y2 > y1:
                             crop = side_img.crop((x1, y1, x2, y2))
                             buf = io.BytesIO()
@@ -164,6 +216,10 @@ def process(file_path: str, output_dir: str, file_stem: str = None) -> list[dict
                             logo_image_data = base64.b64encode(buf.getvalue()).decode()
                             print(f"[pipeline] logo cropped: {x2-x1}×{y2-y1}px")
                         break
+
+                # Mask OpenCV separators inside logo
+                elements = _mask_logo_elements(elements)
+                claude_layout["elements"] = elements
 
                 template = build_template_from_claude(
                     claude_layout,
@@ -247,7 +303,7 @@ def process(file_path: str, output_dir: str, file_stem: str = None) -> list[dict
 # Phase 2 — Image chunking
 # ---------------------------------------------------------------------------
 
-_CHUNK_THRESHOLD_H = 3000  # chunk images taller than this (pixels) — increased to preserve context
+_CHUNK_THRESHOLD_H = 5000  # chunk images taller than this — only extreme high-res scans trigger this
 
 
 def _chunk_image(img, overlap_frac: float = 0.12):
@@ -298,30 +354,25 @@ def _merge_chunk_layouts(top: dict | None, bottom: dict | None,
 
 def _run_image_ensemble(img) -> dict | None:
     """
-    Run Surya+SoM and Claude Vision tool-use concurrently, then merge.
-    Surya provides pixel-perfect coordinates (Precision Engine).
-    Claude Vision fills in logos/separators Surya misses (Holistic Engine).
-    Falls back to dual Claude Vision if Surya is unavailable.
+    Precision extraction: Surya OCR (pixel-accurate text positions) + Set-of-Marks
+    visual prompting → Claude labels blocks and identifies missed decorative elements
+    from the clean image.
+
+    No parallel holistic pass — merging two Claude passes created ghost elements at
+    wrong Y positions whenever their bboxes didn't overlap Surya blocks (IoU < 0.05).
+    Single-source extraction eliminates all such ghosts.
+
+    Falls back to Claude Vision tool_use if Surya is unavailable.
     """
-    from concurrent.futures import ThreadPoolExecutor
+    # Primary: Surya+SoM — pixel-accurate coordinates for all readable text,
+    # Claude fills in decorative/script headers via dual-image prompting.
+    result = extract_layout_surya_som(img)
+    if result is not None:
+        return result
 
-    # Try parallel ensemble (Surya+SoM + Claude Vision)
-    with ThreadPoolExecutor(max_workers=2) as ex:
-        f_precision = ex.submit(extract_layout_surya_som, img)
-        f_holistic = ex.submit(extract_full_layout_via_tool_use, img)
-        precision = f_precision.result()
-        holistic = f_holistic.result()
-
-    if precision is not None:
-        # Surya is the text backbone, but we allow Claude's holistic pass to fill in
-        # text that Surya missed (e.g. script fonts, decorative headers).
-        # deduplication in merge_layouts will prevent overlaps.
-        return merge_layouts(precision, holistic, math_first=True)
-
-    # Surya unavailable or returned nothing — fall back to dual Claude Vision
-    print("[pipeline] Surya unavailable — falling back to dual Claude Vision")
-    prompt_layout = extract_full_layout_via_claude(img)
-    return merge_layouts(prompt_layout, holistic)  # holistic already fetched above
+    # Fallback: Claude Vision tool_use (holistic, no Surya)
+    print("[pipeline] Surya unavailable — falling back to Claude Vision tool_use")
+    return extract_full_layout_via_tool_use(img)
 
 
 def _process_side_image(img) -> dict | None:

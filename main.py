@@ -20,7 +20,8 @@ app = FastAPI(
     version="1.0.0",
 )
 
-OUTPUT_DIR = Path("outputs")
+OUTPUT_DIR = Path(__file__).parent / "outputs"
+OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 
 @app.post("/process")

@@ -608,22 +608,34 @@ def _enforce_single_logo(elements: list) -> list:
 
 
 _HYBRID_SYSTEM_PROMPT = """\
-You are a precise restaurant menu layout analyst. Your goal is to achieve 95%+ accuracy in word-matching against a PDF ground truth.
+You are a precise restaurant menu layout analyst. Your goal is to achieve 95%+ accuracy.
 
-Text blocks from OCR are provided with IDs. Your job:
-1. Label every OCR block by its ID number (subtype, column, font_family, corrected_text if OCR misread).
-2. EXTREMELY IMPORTANT: Identify and capture ALL text elements visible in the image that OCR missed. This includes:
-   - Cursive, script, or handwritten section headers (label as category_header).
-   - Small single-letter tags or abbreviations (e.g., 'B', 'L', 'D', 'P', 'G', 'GF', 'V').
-   - Small footer text or legal disclaimers.
-   - For missed elements, provide an accurate pixel bounding box (bbox) and the content.
-3. logo_bbox: full visual logo region — encompass emblem, frame, and graphical branding.
+You will receive TWO images of the same menu page at identical pixel dimensions:
+- IMAGE 1: Clean original (no annotations) — use this to READ text and locate decorative elements/logo
+- IMAGE 2: Same image with numbered Set-of-Marks bounding boxes — use this to identify OCR block positions
+
+The OCR block list below provides exact pixel bounding boxes in the image coordinate space.
+Use these as spatial anchors when estimating decorative element positions.
+
+Your job:
+1. Label every OCR block by its ID (subtype, column, font_family, corrected_text if OCR misread).
+2. CRITICAL — using IMAGE 1 (clean), identify ALL text OCR missed:
+   - Cursive/script/handwritten section headers (label as category_header).
+   - Small tags: 'GF', 'V', 'DF', meal-period letters (B/L/D).
+   - Footer text, legal disclaimers.
+   For each missed element: measure its bbox in IMAGE 1 pixel coordinates by visually
+   locating where it sits relative to nearby OCR blocks whose pixel coords you know.
+3. logo_bbox: find the logo/emblem using IMAGE 1 — encompass the full graphic (emblem + frame).
 4. background_color: dominant background as #rrggbb.
-5. ocr_labels: corrected_text is crucial for decorative/script fonts where OCR often hallucinates characters.
 
-Rules:
-- font_family: "decorative-script" for cursive/handwritten, "serif" for classic serif, "sans-serif" for modern clean, "display" for large decorative.
-- Do NOT skip any text. Every word counts towards the accuracy score.
+BBOX RULES (critical for accuracy):
+- ALL bboxes must be in IMAGE 1's pixel coordinate space (same dimensions as both images).
+- Anchor decorative element bboxes to nearby OCR block y-coordinates. Example: if a cursive
+  header sits just above OCR block [5] at y=340, the header's y2 should be ≈335.
+- Do NOT invent decorative elements. Only include text visible in IMAGE 1 that has NO
+  corresponding numbered OCR block in IMAGE 2.
+- font_family: "decorative-script" for cursive/calligraphy, "serif", "sans-serif", "display".
+- column: 0 for left/single column, 1 for right column.
 """
 
 _HYBRID_TOOL_SCHEMA = {
@@ -842,21 +854,26 @@ _SOM_PALETTE = [
 
 
 def _draw_som_annotations(img: Image.Image, blocks: list) -> Image.Image:
-    """Draw colored numbered bounding boxes on a copy of img (Set-of-Marks)."""
+    """Draw semi-transparent numbered bounding boxes on a copy of img (Set-of-Marks).
+    Alpha-blended fill ensures decorative/cursive text underneath remains visible to Claude."""
     from PIL import ImageDraw
-    annotated = img.copy().convert("RGB")
-    draw = ImageDraw.Draw(annotated)
+    base = img.copy().convert("RGBA")
+    overlay = Image.new("RGBA", base.size, (0, 0, 0, 0))
+    draw = ImageDraw.Draw(overlay)
     for i, block in enumerate(blocks):
         color = _SOM_PALETTE[i % len(_SOM_PALETTE)]
+        r, g, b = int(color[1:3], 16), int(color[3:5], 16), int(color[5:7], 16)
         x1, y1, x2, y2 = block["bbox"]
-        draw.rectangle([x1, y1, x2, y2], outline=color, width=3)
+        # Semi-transparent fill (~24% opacity) — underlying text remains readable
+        draw.rectangle([x1, y1, x2, y2], fill=(r, g, b, 60), outline=(r, g, b, 220), width=2)
         lbl = str(i + 1)
         lbl_w, lbl_h = len(lbl) * 9 + 6, 18
         lbl_x = x1
         lbl_y = max(0, y1 - lbl_h - 1)
-        draw.rectangle([lbl_x, lbl_y, lbl_x + lbl_w, lbl_y + lbl_h], fill=color)
-        draw.text((lbl_x + 3, lbl_y + 2), lbl, fill="white")
-    return annotated
+        draw.rectangle([lbl_x, lbl_y, lbl_x + lbl_w, lbl_y + lbl_h], fill=(r, g, b, 220))
+        draw.text((lbl_x + 3, lbl_y + 2), lbl, fill=(255, 255, 255, 255))
+    result = Image.alpha_composite(base, overlay)
+    return result.convert("RGB")
 
 
 def extract_layout_surya_som(img: Image.Image) -> dict | None:
@@ -885,38 +902,60 @@ def extract_layout_surya_som(img: Image.Image) -> dict | None:
     
     orig_w, orig_h = img.size
     send_img = annotated_img
+    clean_send = img  # clean version sent alongside annotated for accurate text/logo reading
     scale_x = scale_y = 1.0
     if max(orig_w, orig_h) > _MAX_IMG_DIM:
         ratio = _MAX_IMG_DIM / max(orig_w, orig_h)
         new_w = max(1, int(orig_w * ratio))
         new_h = max(1, int(orig_h * ratio))
         send_img = annotated_img.resize((new_w, new_h), Image.LANCZOS)
+        clean_send = img.resize((new_w, new_h), Image.LANCZOS)  # same dims as annotated
         scale_x = orig_w / new_w
         scale_y = orig_h / new_h
 
+    # Encode annotated image (IMAGE 2 — for OCR block spatial reference)
     buf = io.BytesIO()
     send_img.convert("RGB").save(buf, format="JPEG", quality=85)
-    image_b64 = base64.standard_b64encode(buf.getvalue()).decode()
+    annotated_b64 = base64.standard_b64encode(buf.getvalue()).decode()
 
-    # Compact block list for Claude — position context only, no coordinates to reproduce
+    # Encode clean image (IMAGE 1 — for accurate text reading and decorative element location)
+    clean_buf = io.BytesIO()
+    clean_send.convert("RGB").save(clean_buf, format="JPEG", quality=85)
+    clean_b64 = base64.standard_b64encode(clean_buf.getvalue()).decode()
+
+    # Block list for Claude — absolute pixel coords in Claude's image space (sw×sh)
+    # so Claude can anchor decorative element bboxes precisely relative to OCR blocks.
     lines = []
     for i, b in enumerate(surya_blocks):
-        x1, y1 = b["bbox"][0], b["bbox"][1]
-        pct_x = round(x1 / orig_w * 100)
-        pct_y = round(y1 / orig_h * 100)
+        x1, y1, x2, y2 = b["bbox"]
+        # Convert from original (upscaled) image coords → Claude's send_img coords
+        cx1 = x1 / scale_x if scale_x != 1.0 else x1
+        cy1 = y1 / scale_y if scale_y != 1.0 else y1
+        cw  = (x2 - x1) / scale_x if scale_x != 1.0 else (x2 - x1)
+        ch  = (y2 - y1) / scale_y if scale_y != 1.0 else (y2 - y1)
         text = b["text"] if len(b["text"]) <= 80 else b["text"][:77] + "..."
-        lines.append(f"[{i + 1}] \"{text}\" — top:{pct_y}%, left:{pct_x}%")
+        lines.append(
+            f"[{i + 1}] \"{text}\" — x={cx1:.0f} y={cy1:.0f} w={cw:.0f} h={ch:.0f}"
+        )
     block_list = "\n".join(lines)
 
     sw, sh = send_img.size
     user_msg = (
-        f"Menu image: {sw}×{sh}px.\n\n"
-        f"OCR blocks ({len(surya_blocks)}) — locate each by its text content and position:\n"
+        f"Both images are {sw}×{sh}px. All bbox values must be in this pixel space.\n\n"
+        f"OCR blocks (Surya pixel-accurate positions, {len(surya_blocks)} total):\n"
         f"{block_list}\n\n"
-        "1. Label every block by its ID number (subtype, column, font_family, corrected_text if OCR misread).\n"
-        "2. Add decorative_elements for any cursive/script/handwritten text visible in the image "
-        "that is NOT represented in the block list above (entire sections written in calligraphy, "
-        "chalk-style headers, hand-lettered category names, etc.)."
+        "TASK 1 — Label OCR blocks: for each block ID assign subtype, column (0=left, 1=right), "
+        "font_family, and corrected_text if OCR misread the text.\n\n"
+        "TASK 2 — Decorative elements (visible text OCR missed, e.g. cursive/script section headers):\n"
+        "  Examine IMAGE 1 (clean). For each element not covered by a numbered block:\n"
+        "  a) Find the OCR block immediately BELOW it in the same column from the list above.\n"
+        "  b) Set y2 = that block's y minus 4. Set y1 = y2 minus the element's pixel height.\n"
+        "  c) Measure x1/x2 from IMAGE 1 directly.\n"
+        "  Example: script 'Course One' sits above block [7] at y=310 → bbox.y=310-h-4.\n"
+        "  Only if no OCR block is directly below it in the column, estimate position from IMAGE 1.\n\n"
+        "TASK 3 — logo_bbox: In IMAGE 1, encompass the ENTIRE restaurant branding block as one bbox. "
+        "Include every line of the logo text AND decorative graphics (e.g. 'the' script, 'CHÂTeau', "
+        "'SARASOTA', decorative swash lines — all are ONE logo). Do not split into parts.\n"
     )
 
     try:
@@ -929,8 +968,10 @@ def extract_layout_surya_som(img: Image.Image) -> dict | None:
             messages=[{
                 "role": "user",
                 "content": [
-                    {"type": "image", "source": {
-                        "type": "base64", "media_type": "image/jpeg", "data": image_b64}},
+                    {"type": "text", "text": "IMAGE 1 — Clean original (use for reading text and locating logo/decorative elements):"},
+                    {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": clean_b64}},
+                    {"type": "text", "text": "IMAGE 2 — Annotated with numbered boxes (use for OCR block identification only):"},
+                    {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": annotated_b64}},
                     {"type": "text", "text": user_msg},
                 ],
             }],
@@ -1021,6 +1062,9 @@ def extract_layout_surya_som(img: Image.Image) -> dict | None:
         _px = "left" if _lb_cx < orig_w * 0.35 else ("right" if _lb_cx > orig_w * 0.65 else "center")
         elements.append({"type": "logo", "bbox": lb, "position_hint": f"{_py}_{_px}"})
 
+    # Snap cursive section headers to just above their content blocks (Surya pixel-accurate)
+    elements = _snap_decorative_headers(elements)
+
     print(f"[surya_som] built {len(elements)} elements "
           f"(ocr={len(surya_blocks)}, decorative={len(data.get('decorative_elements', []))})")
     return {
@@ -1096,40 +1140,119 @@ def _dedup_separators(elements: list) -> list:
 
 def _mask_logo_elements(elements: list) -> list:
     """
-    Mask (delete) any text or separator elements whose center point falls
-    inside any logo's bounding box. This prevents Claude from extracting 
-    stylized brand text twice (once as text, once as part of the logo).
+    Mask text/separator elements whose center falls inside an expanded logo zone.
+    The zone extends 60px beyond the logo bbox on all sides to catch logo branding
+    fragments (decorative script, thin rules, etc.) that Claude places just outside
+    the reported logo_bbox but are visually part of the logo area.
+    Only applies the horizontal clearance on the LOGO'S SIDE (left-aligned logos
+    don't mask center-page text at the same y-band).
     """
     logos = [e for e in elements if e.get("type") == "logo"]
     if not logos:
         return elements
-    
+
     result = []
     for el in elements:
         if el.get("type") == "logo":
             result.append(el)
             continue
-            
+
         bd = el.get("bbox")
         if not bd:
             result.append(el)
             continue
-            
+
         cx = bd.get("x", 0) + bd.get("w", 0) / 2
         cy = bd.get("y", 0) + bd.get("h", 0) / 2
-        
+
         inside_logo = False
         for logo in logos:
             lbd = logo.get("bbox")
-            if not lbd: continue
-            lx1, ly1 = lbd.get("x", 0), lbd.get("y", 0)
-            lx2, ly2 = lx1 + lbd.get("w", 0), ly1 + lbd.get("h", 0)
+            if not lbd:
+                continue
+            lw = lbd.get("w", 0)
+            lh = lbd.get("h", 0)
+            lx = lbd.get("x", 0)
+            ly = lbd.get("y", 0)
+            # Expand logo clearance zone: 60px below (catches misplaced logo text),
+            # 30px on sides/top.  Use a proportional cap so we don't eat page content.
+            clear_y = min(lh * 0.5, 70.0)
+            clear_x = min(lw * 0.25, 50.0)
+            lx1 = lx - clear_x
+            ly1 = ly - 30
+            lx2 = lx + lw + clear_x
+            ly2 = ly + lh + clear_y
             if lx1 <= cx <= lx2 and ly1 <= cy <= ly2:
                 inside_logo = True
                 break
-        
+
         if not inside_logo:
             result.append(el)
+    return result
+
+
+def _snap_decorative_headers(elements: list) -> list:
+    """
+    Post-processing: anchor cursive section headers to just above the first
+    Surya-detected (non-decorative) text block directly below them in the same column.
+
+    Claude's decorative element y-estimates can be off by 50-150px.  Surya's OCR
+    blocks are pixel-accurate.  This function snaps each decorative header so its
+    bottom sits 4px above the nearest content block below it, eliminating the
+    visual overlap between section headers and the "choose one" / item lines.
+
+    Only adjusts y (and h if the estimated height is unreasonably large).
+    """
+    # Collect non-decorative text blocks sorted by (column, y)
+    content_blocks = [
+        e for e in elements
+        if e.get("type") == "text"
+        and e.get("style", {}).get("font_family") != "decorative-script"
+    ]
+
+    result = list(elements)
+    for i, el in enumerate(result):
+        if el.get("type") != "text":
+            continue
+        if el.get("style", {}).get("font_family") != "decorative-script":
+            continue
+
+        el_col = el.get("column", 0)
+        el_bd = el.get("bbox", {})
+        el_top = el_bd.get("y", 0)
+        el_h = el_bd.get("h", 40)
+
+        # Find the first content block in the same column that starts below
+        # the TOP of this decorative element (use top, not center, to handle
+        # cases where Claude placed the element too high)
+        candidates = [
+            b for b in content_blocks
+            if b.get("column", 0) == el_col
+            and b.get("bbox", {}).get("y", 0) > el_top
+        ]
+        if not candidates:
+            continue
+
+        first_below = min(candidates, key=lambda b: b["bbox"]["y"])
+        first_y = first_below["bbox"]["y"]
+
+        gap = 4.0
+        # Cap height: decorative headers are rarely taller than 70px
+        capped_h = min(el_h, 70.0)
+        new_y = first_y - gap - capped_h
+
+        if new_y < 0:
+            new_y = max(0.0, first_y - gap - capped_h)
+
+        if abs(new_y - el_top) > 2:  # only update if there's a meaningful change
+            result[i] = dict(el)
+            result[i]["bbox"] = dict(el_bd)
+            result[i]["bbox"]["y"] = float(new_y)
+            result[i]["bbox"]["h"] = float(capped_h)
+            if result[i].get("style"):
+                result[i]["style"] = dict(result[i]["style"])
+                result[i]["style"]["font_size"] = round(capped_h * 0.75, 1)
+
     return result
 
 
@@ -1171,10 +1294,15 @@ def merge_layouts(primary: dict | None, secondary: dict | None,
             continue
 
         if math_first:
-            # DO NOT merge hallucinated text or separator boxes from holistic pass 
-            # when we already have Surya's precision boxes. Claude's holistic
-            # boxes are often misaligned, causing duplicate rendering.
-            continue
+            # In Surya-primary mode, only include holistic text that has zero/trivial
+            # spatial overlap with any Surya box (IoU < 0.05). These are elements Surya
+            # missed entirely — e.g., large cursive section headers in decorative script
+            # fonts. Holistic elements that overlap Surya boxes are dropped; Surya's
+            # pixel-accurate coordinates win for those regions.
+            max_iou_check = max((_bbox_iou(bbox, pb) for pb in primary_bboxes), default=0.0)
+            if max_iou_check >= 0.05:
+                continue
+            # Falls through to the IoU add-check below
 
         # Add non-logo element only if it doesn't overlap existing ones
         max_iou = max((_bbox_iou(bbox, pb) for pb in primary_bboxes), default=0.0)
