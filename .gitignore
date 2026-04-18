@@ -1,31 +1,49 @@
+# Python
 __pycache__/
 *.pyc
 *.pyo
-.env
-.venv/
-venv/
 *.egg-info/
 dist/
 build/
-*.psd
+
+# Environment
+.env
+.venv/
+venv/
+
+# OS
 .DS_Store
-Menu Template/
 
-# Generated test output and comparison scripts
-extractor_comparison.json
+# Secrets / local config
+.claude/
+
+# Generated outputs (processed menu files)
+outputs/
+outputs_test/
+test_results/
+gemini_tests/
+
+# Dev tools / one-off scripts
+json_canvas_renderer.html
+reprocess_premier.py
 compare_extractors.py
+extractor_comparison.json
+run_gemini_tests.py
+test_images.py
 
-# Session/task notes (not source code)
+# Dev requirements (use requirements-prod.txt)
+requirements.txt
+
+# Notes / planning docs (not source code)
 PROGRESS.md
 SESSION_NOTES.md
 SESSION_NOTES_S4.md
 plannings.md
 surya.md
 Copy of *.md
-.agents/
 *.docx
-test_images.py
-outputs_test/
-outputs/
-gemini_tests/
-run_gemini_tests.py
+.agents/
+
+# Large assets
+Menu Template/
+*.psd
