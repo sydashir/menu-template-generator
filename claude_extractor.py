@@ -302,7 +302,7 @@ def extract_full_layout_via_claude(img: Image.Image) -> dict | None:
 
     try:
         response = client.messages.create(
-            model="claude-opus-4-6",
+            model="claude-sonnet-4-6",
             max_tokens=16384,  # 32768 triggers Anthropic SDK streaming requirement error
             messages=[{
                 "role": "user",
@@ -378,7 +378,7 @@ def extract_full_layout_via_tool_use(img: Image.Image) -> dict | None:
 
     try:
         response = client.messages.create(
-            model="claude-opus-4-6",
+            model="claude-sonnet-4-6",
             max_tokens=16384,  # 32768 triggers Anthropic SDK streaming requirement error
             system=_TOOL_SYSTEM_PROMPT,
             tools=[_TOOL_SCHEMA],
@@ -982,7 +982,7 @@ def extract_layout_surya_som(img: Image.Image) -> dict | None:
 
     try:
         response = client.messages.create(
-            model="claude-opus-4-6",
+            model="claude-sonnet-4-6",
             max_tokens=16384,
             system=_HYBRID_SYSTEM_PROMPT,
             tools=[_HYBRID_TOOL_SCHEMA],
