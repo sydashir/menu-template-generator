@@ -303,6 +303,7 @@
   <script>
     let selectedFile = null;
     let currentId = null;
+    let sessionProcessed = [];  // files processed in this browser session
 
     const uploadZone   = document.getElementById('uploadZone');
     const fileInput    = document.getElementById('fileInput');
@@ -375,7 +376,7 @@
         if (data.id) {
           setDownloads(data.id, data.name);
           showPreview(data.id, data.name);
-          loadHistory(); // refresh dropdown
+          addToSession(data.id, data.name);
         }
 
       } catch (e) {
@@ -458,34 +459,25 @@
       previewSpinner.style.display = 'none';
     }
 
-    // ── History dropdown ───────────────────────────────────────────────────────
-    async function loadHistory() {
-      try {
-        const res = await fetch('/menus');
-        const menus = await res.json();
-        historySelect.innerHTML = '<option value="">— select a previous menu —</option>';
-        for (const m of menus) {
-          const opt = document.createElement('option');
-          opt.value = JSON.stringify({ id: m._id, name: m.name, menu: m });
-          opt.textContent = `${m.name} (${m.file_type || '?'})`;
-          historySelect.appendChild(opt);
-        }
-      } catch (e) {
-        console.error('Failed to load history:', e);
+    // ── Session history dropdown ───────────────────────────────────────────────
+    function addToSession(id, name) {
+      sessionProcessed.push({ id, name });
+      historySelect.innerHTML = '<option value="">— select a previous menu —</option>';
+      for (const m of sessionProcessed) {
+        const opt = document.createElement('option');
+        opt.value = JSON.stringify({ id: m.id, name: m.name });
+        opt.textContent = m.name;
+        historySelect.appendChild(opt);
       }
     }
 
     historySelect.addEventListener('change', e => {
       if (!e.target.value) return;
-      const { id, name, menu } = JSON.parse(e.target.value);
+      const { id, name } = JSON.parse(e.target.value);
       currentId = id;
-      showMetaFromHistory(menu);
       setDownloads(id, name);
       showPreview(id, name);
     });
-
-    // Init
-    loadHistory();
   </script>
 </body>
 </html>

@@ -125,28 +125,31 @@ async def process_menu(file: UploadFile = File(...)):
     finally:
         Path(tmp_path).unlink(missing_ok=True)
 
-    # Save results to MongoDB
+    # Save results to MongoDB — use actual paths from pipeline output
     menu_id = None
-    template_file = out_dir / f"{original_stem}_template.json"
-    data_file = out_dir / f"{original_stem}_menu_data.json"
-
-    if template_file.exists() and data_file.exists():
-        from database import upsert_menu
+    from database import upsert_menu
+    file_type = "pdf" if ext == ".pdf" else "image"
+    for r in results:
+        tmpl_path = Path(r["template"])
+        data_path = Path(r["menu_data"])
+        if not (tmpl_path.exists() and data_path.exists()):
+            continue
         try:
-            template = json.loads(template_file.read_text(encoding="utf-8"))
-            menu_data = json.loads(data_file.read_text(encoding="utf-8"))
-            file_type = "pdf" if ext == ".pdf" else "image"
-            menu_id = await upsert_menu(
+            template = json.loads(tmpl_path.read_text(encoding="utf-8"))
+            menu_data = json.loads(data_path.read_text(encoding="utf-8"))
+            upserted = await upsert_menu(
                 name=original_stem,
                 source_file=file.filename,
                 file_type=file_type,
-                side="front",
-                page=1,
+                side=r.get("side", "full"),
+                page=r.get("page", 1),
                 menu_data=menu_data,
                 template=template,
             )
+            if menu_id is None:
+                menu_id = upserted  # return first result's ID for preview
         except Exception as e:
-            logger.error("MongoDB upsert failed for %r: %s", original_stem, e)
+            logger.error("MongoDB upsert failed for %r page %s: %s", original_stem, r.get("page"), e)
 
     return JSONResponse(content={
         "file": file.filename,
