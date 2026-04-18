@@ -102,34 +102,6 @@
       font-weight: 700;
       font-size: 11px;
     }
-    .main-grid {
-      display: grid;
-      grid-template-columns: 1fr 400px;
-      gap: 16px;
-      align-items: start;
-    }
-    .canvas-column {
-      min-width: 0;
-    }
-    .data-column {
-      position: sticky;
-      top: 16px;
-      max-height: calc(100vh - 32px);
-      overflow: auto;
-    }
-    .data-card {
-      background: #0b1220;
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      padding: 12px;
-      font-family: 'JetBrains Mono', 'Fira Code', monospace;
-      font-size: 11px;
-      white-space: pre-wrap;
-      color: #94a3b8;
-    }
-    .data-card b { color: var(--accent); }
-    .data-card i { color: var(--muted); }
-    
     .canvas-wrap {
       background: #0b1220;
       border: 1px solid var(--line);
@@ -229,24 +201,19 @@
       <h1>Canvas JSON Validator</h1>
 
       <div class="section">
-        <h2>1) Load JSON files</h2>
-        <div class="small" style="margin-bottom:8px">
-          Select both <b>*_template.json</b> and <b>*_menu_data.json</b> files together.
-        </div>
+        <h2>1) Load template JSON file(s)</h2>
         <input id="templateFiles" type="file" accept="application/json,.json" multiple />
         <div class="row" style="margin-top:8px">
-          <label for="templateSelect">Selected Menu</label>
+          <label for="templateSelect">Template</label>
         </div>
         <select id="templateSelect"></select>
         <div class="row" style="margin-top:8px">
-          <button id="prevBtn" style="flex:1">Prev</button>
-          <button id="nextBtn" style="flex:1">Next</button>
-          <button id="clearBtn" style="flex:0.5; background:#374151">Clear</button>
+          <button id="prevBtn">Previous</button>
+          <button id="nextBtn">Next</button>
         </div>
-        <div class="small" id="loadStatus" style="margin-top:8px; color:var(--accent)"></div>
       </div>
 
-      <div class="section" style="display:none">
+      <div class="section">
         <h2>2) Optional menu_data JSON</h2>
         <input id="menuDataFile" type="file" accept="application/json,.json" multiple />
         <div class="small" style="margin-top:6px" id="menuDataStatus"></div>
@@ -300,23 +267,18 @@
         <div class="missed-list" id="missedList"></div>
       </div>
 
-      <div class="main-grid">
-        <div class="canvas-column">
-          <div class="canvas-wrap">
-            <canvas id="canvas" width="1200" height="1600"></canvas>
-          </div>
-          <div class="section" style="margin-top:12px">
-            <h2>Loaded JSON preview</h2>
-            <pre id="jsonPreview">No file loaded.</pre>
-          </div>
-        </div>
+      <div class="canvas-wrap">
+        <canvas id="canvas" width="1200" height="1600"></canvas>
+      </div>
 
-        <div class="data-column">
-          <div class="section">
-            <h2>Menu Data (Semantic)</h2>
-            <div id="menuSummary" class="data-card">No menu_data paired.</div>
-          </div>
-        </div>
+      <div class="section" style="margin-top:12px">
+        <h2>Loaded JSON preview</h2>
+        <pre id="jsonPreview">No file loaded.</pre>
+      </div>
+
+      <div class="section">
+        <h2>Menu data summary (optional)</h2>
+        <pre id="menuSummary">No menu_data loaded.</pre>
       </div>
     </main>
   </div>
@@ -860,48 +822,16 @@
 
     async function onTemplateFilesChanged() {
       const files = Array.from(els.templateFiles.files || []);
-      if (!files.length) return;
-
-      const templateMap = new Map();
-      const menuDataMap = new Map();
-
-      // Separate templates and menu_data
-      for (const f of files) {
-        const name = f.name.toLowerCase();
-        if (name.endsWith('_template.json')) {
-          const stem = f.name.replace(/_template\.json$/i, '');
-          templateMap.set(stem, f);
-        } else if (name.endsWith('_menu_data.json')) {
-          const stem = f.name.replace(/_menu_data\.json$/i, '');
-          menuDataMap.set(stem, f);
-        } else if (name.endsWith('.json')) {
-          // Fallback for generic json files
-          templateMap.set(f.name, f);
-        }
-      }
-
+      state.templateFiles = files;
       state.templates = [];
-      state.templateFiles = [];
-      state.menuDataList = [];
       state.index = 0;
 
-      const stems = Array.from(templateMap.keys()).sort();
-      for (const stem of stems) {
-        const tf = templateMap.get(stem);
-        const mf = menuDataMap.get(stem);
-        
+      for (const f of files) {
         try {
-          const tj = await readJsonFile(tf);
-          state.templates.push(tj);
-          state.templateFiles.push(tf);
-          
-          if (mf) {
-            state.menuDataList.push(await readJsonFile(mf));
-          } else {
-            state.menuDataList.push(null);
-          }
+          const j = await readJsonFile(f);
+          state.templates.push(j);
         } catch (e) {
-          console.error('Invalid JSON:', tf.name, e);
+          console.error('Invalid JSON:', f.name, e);
         }
       }
 
@@ -909,51 +839,33 @@
       state.templateFiles.forEach((f, i) => {
         const opt = document.createElement('option');
         opt.value = String(i);
-        const hasData = state.menuDataList[i] ? ' 📄' : '';
-        opt.textContent = f.name + hasData;
+        opt.textContent = f.name;
         els.templateSelect.appendChild(opt);
       });
-
-      const pairedCount = state.menuDataList.filter(Boolean).length;
-      const totalCount = state.templates.length;
-      document.getElementById('loadStatus').textContent = 
-        `Loaded ${totalCount} templates (${pairedCount} paired with menu_data)`;
 
       updateScoreBtn();
       await render();
     }
 
-    document.getElementById('clearBtn').addEventListener('click', () => {
-      state.templates = [];
-      state.templateFiles = [];
-      state.menuDataList = [];
-      state.index = 0;
-      els.templateFiles.value = '';
-      els.templateSelect.innerHTML = '';
-      document.getElementById('loadStatus').textContent = '';
-      render();
-    });
-
     function menuDataSummary(j) {
-      if (!j) return '<i>No menu_data paired.</i>';
+      if (!j) return 'No menu_data loaded.';
       const lines = [];
-      lines.push(`<b>RESTAURANT:</b> ${j.restaurant_name || 'n/a'}`);
-      lines.push(`<b>FILE:</b> ${j.source_file || 'n/a'}`);
-      lines.push(`<b>LAYOUT:</b> ${j.num_columns ?? 'n/a'} cols, ${j.num_separators ?? 'n/a'} seps`);
-      lines.push('<hr style="border:0; border-top:1px solid #334155; margin:8px 0">');
-
-      let itemCount = 0;
+      lines.push(`source_file: ${j.source_file || 'n/a'}`);
+      lines.push(`side: ${j.side || 'n/a'}`);
+      lines.push(`restaurant_name: ${j.restaurant_name || 'n/a'}`);
+      lines.push(`num_columns: ${j.num_columns ?? 'n/a'}`);
+      lines.push(`num_separators: ${j.num_separators ?? 'n/a'}`);
+      lines.push('');
+      let categoryCount = 0, itemCount = 0;
       for (const cat of (j.categories || [])) {
+        categoryCount++;
         const n = (cat.items || []).length;
         itemCount += n;
-        lines.push(`<b>[ ${cat.name} ]</b> <i>(col ${cat.column ?? 0})</i>`);
-        for (const item of (cat.items || [])) {
-          lines.push(`  • ${item.name} ... <b>${item.price || ''}</b>`);
-        }
-        lines.push('');
+        lines.push(`- ${cat.name} (col ${cat.column ?? 0}) -> ${n} items`);
       }
-      lines.push('<hr style="border:0; border-top:1px solid #334155; margin:8px 0">');
-      lines.push(`<b>TOTAL:</b> ${j.categories?.length || 0} categories, ${itemCount} items`);
+      lines.push('');
+      lines.push(`categories_total: ${categoryCount}`);
+      lines.push(`items_total: ${itemCount}`);
       return lines.join('\n');
     }
 
@@ -1013,6 +925,35 @@
     });
 
     render();
+
+    // ── Auto-load from ?id= query param (used by client UI iframe) ─────────────
+    (async function autoLoadFromId() {
+      const params = new URLSearchParams(window.location.search);
+      const id = params.get('id');
+      if (!id) return;
+      // Hide sidebar and go full-width
+      document.querySelector('.sidebar').style.display = 'none';
+      document.querySelector('.wrap').style.gridTemplateColumns = '1fr';
+      try {
+        const [tmplRes, dataRes] = await Promise.all([
+          fetch(`/menus/${id}/template`),
+          fetch(`/menus/${id}/data`),
+        ]);
+        if (!tmplRes.ok || !dataRes.ok) {
+          console.error('Failed to load menu', id);
+          return;
+        }
+        const tmplJson = await tmplRes.json();
+        const dataJson = await dataRes.json();
+        state.templates = [tmplJson];
+        state.templateFiles = [{ name: id }];
+        state.menuDataList = [dataJson];
+        state.index = 0;
+        await render();
+      } catch (e) {
+        console.error('autoLoadFromId error:', e);
+      }
+    })();
   </script>
 </body>
 </html>

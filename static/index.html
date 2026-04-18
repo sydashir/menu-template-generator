@@ -1,0 +1,483 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Menu Template Generator</title>
+  <style>
+    :root {
+      --bg: #0f172a;
+      --panel: #111827;
+      --card: #1f2937;
+      --text: #e5e7eb;
+      --muted: #9ca3af;
+      --accent: #22c55e;
+      --line: #374151;
+      --danger: #ef4444;
+      --warn: #f59e0b;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+    header {
+      background: var(--panel);
+      border-bottom: 1px solid var(--line);
+      padding: 14px 24px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-shrink: 0;
+    }
+    header h1 { font-size: 16px; font-weight: 700; }
+    header .sub { font-size: 12px; color: var(--muted); }
+
+    .layout {
+      display: grid;
+      grid-template-columns: 340px 1fr;
+      flex: 1;
+      min-height: 0;
+      height: calc(100vh - 53px);
+    }
+
+    /* ── Left panel ── */
+    .left {
+      background: var(--panel);
+      border-right: 1px solid var(--line);
+      padding: 16px;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+    .section-title {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: .06em;
+      color: var(--muted);
+      margin-bottom: 8px;
+    }
+
+    /* Upload zone */
+    .upload-zone {
+      border: 2px dashed var(--line);
+      border-radius: 10px;
+      padding: 24px 16px;
+      text-align: center;
+      cursor: pointer;
+      transition: border-color .2s, background .2s;
+      background: #0b1220;
+    }
+    .upload-zone:hover, .upload-zone.drag { border-color: var(--accent); background: #0f1f10; }
+    .upload-zone .icon { font-size: 28px; margin-bottom: 8px; }
+    .upload-zone .hint { font-size: 12px; color: var(--muted); margin-top: 4px; }
+    .upload-zone .selected-file {
+      font-size: 13px;
+      color: var(--accent);
+      margin-top: 8px;
+      word-break: break-all;
+    }
+    #fileInput { display: none; }
+
+    button.primary {
+      width: 100%;
+      background: var(--accent);
+      color: #0f172a;
+      border: none;
+      border-radius: 8px;
+      padding: 10px;
+      font-size: 14px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: opacity .15s;
+    }
+    button.primary:hover { opacity: 0.88; }
+    button.primary:disabled { opacity: 0.4; cursor: default; }
+
+    /* Status */
+    .status-box {
+      background: #0b1220;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 10px 12px;
+      font-size: 12px;
+      color: var(--muted);
+      display: none;
+      gap: 8px;
+      align-items: center;
+    }
+    .status-box.visible { display: flex; }
+    .status-box.ok   { border-color: var(--accent); color: var(--accent); }
+    .status-box.err  { border-color: var(--danger); color: var(--danger); }
+    .spinner-sm {
+      width: 14px; height: 14px;
+      border: 2px solid var(--line);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin .7s linear infinite;
+      flex-shrink: 0;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* Meta */
+    .meta-box {
+      background: #0b1220;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 10px 12px;
+      font-size: 12px;
+    }
+    .meta-row {
+      display: flex;
+      justify-content: space-between;
+      padding: 4px 0;
+      border-bottom: 1px dashed var(--line);
+    }
+    .meta-row:last-child { border-bottom: 0; }
+    .meta-row span:first-child { color: var(--muted); }
+    .meta-row span:last-child { color: var(--text); font-weight: 600; }
+    .badge {
+      background: var(--accent);
+      color: #111827;
+      border-radius: 999px;
+      padding: 1px 8px;
+      font-size: 11px;
+      font-weight: 700;
+    }
+
+    /* Download buttons */
+    .btn-group { display: flex; flex-direction: column; gap: 8px; }
+    a.dl-btn {
+      display: block;
+      text-align: center;
+      background: var(--card);
+      color: var(--text);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 9px;
+      font-size: 13px;
+      font-weight: 600;
+      text-decoration: none;
+      transition: border-color .15s, color .15s;
+    }
+    a.dl-btn:hover { border-color: var(--accent); color: var(--accent); }
+    a.dl-btn.disabled { opacity: 0.35; pointer-events: none; }
+
+    /* Divider */
+    .divider {
+      border: 0;
+      border-top: 1px solid var(--line);
+    }
+
+    /* Previous menus dropdown */
+    select {
+      width: 100%;
+      background: #0b1220;
+      color: var(--text);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 9px 10px;
+      font-size: 13px;
+      cursor: pointer;
+    }
+    select:focus { outline: none; border-color: var(--accent); }
+
+    /* ── Right panel ── */
+    .right {
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+    }
+    .preview-bar {
+      background: var(--card);
+      border-bottom: 1px solid var(--line);
+      padding: 10px 16px;
+      font-size: 13px;
+      color: var(--muted);
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-shrink: 0;
+    }
+    .preview-bar .name { color: var(--text); font-weight: 600; }
+    .spinner-bar {
+      display: none;
+      width: 16px; height: 16px;
+      border: 2px solid var(--line);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin .7s linear infinite;
+    }
+    iframe {
+      flex: 1;
+      border: none;
+      background: var(--bg);
+    }
+    .placeholder {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      color: var(--muted);
+      gap: 10px;
+      font-size: 14px;
+    }
+    .placeholder .big { font-size: 40px; }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <h1>Menu Template Generator</h1>
+      <div class="sub">Upload a menu PDF or image → get structured JSON + canvas preview</div>
+    </div>
+  </header>
+
+  <div class="layout">
+    <!-- Left panel -->
+    <div class="left">
+
+      <!-- Upload -->
+      <div>
+        <div class="section-title">Upload Menu</div>
+        <div class="upload-zone" id="uploadZone">
+          <div class="icon">📄</div>
+          <div>Drop a PDF or image here</div>
+          <div class="hint">or click to browse — PDF, JPG, PNG, WEBP</div>
+          <div class="selected-file" id="selectedFileName"></div>
+        </div>
+        <input type="file" id="fileInput" accept=".pdf,.jpg,.jpeg,.png,.webp" />
+      </div>
+
+      <button class="primary" id="processBtn" disabled>Process Menu</button>
+
+      <div class="status-box" id="statusBox">
+        <div class="spinner-sm" id="statusSpinner"></div>
+        <span id="statusText"></span>
+      </div>
+
+      <!-- Current result meta -->
+      <div id="metaSection" style="display:none">
+        <div class="section-title">Result</div>
+        <div class="meta-box" id="metaBox"></div>
+      </div>
+
+      <!-- Download buttons -->
+      <div class="btn-group">
+        <a class="dl-btn disabled" id="dlData" href="#" download>⬇ Download menu_data.json</a>
+        <a class="dl-btn disabled" id="dlTemplate" href="#" download>⬇ Download template.json</a>
+      </div>
+
+      <hr class="divider" />
+
+      <!-- Previously processed -->
+      <div>
+        <div class="section-title">Previously Processed</div>
+        <select id="historySelect">
+          <option value="">— select a previous menu —</option>
+        </select>
+      </div>
+
+    </div>
+
+    <!-- Right panel -->
+    <div class="right">
+      <div class="preview-bar">
+        <div class="spinner-bar" id="previewSpinner"></div>
+        <span class="name" id="previewName">No menu selected</span>
+      </div>
+      <div class="placeholder" id="placeholder">
+        <div class="big">🍽️</div>
+        <div>Upload a menu or select a previous one to preview</div>
+      </div>
+      <iframe id="previewFrame" src="" style="display:none"></iframe>
+    </div>
+  </div>
+
+  <script>
+    let selectedFile = null;
+    let currentId = null;
+    let sessionProcessed = [];  // files processed in this browser session
+
+    const uploadZone   = document.getElementById('uploadZone');
+    const fileInput    = document.getElementById('fileInput');
+    const selectedFileName = document.getElementById('selectedFileName');
+    const processBtn   = document.getElementById('processBtn');
+    const statusBox    = document.getElementById('statusBox');
+    const statusSpinner = document.getElementById('statusSpinner');
+    const statusText   = document.getElementById('statusText');
+    const metaSection  = document.getElementById('metaSection');
+    const metaBox      = document.getElementById('metaBox');
+    const dlData       = document.getElementById('dlData');
+    const dlTemplate   = document.getElementById('dlTemplate');
+    const historySelect = document.getElementById('historySelect');
+    const previewSpinner = document.getElementById('previewSpinner');
+    const previewName  = document.getElementById('previewName');
+    const previewFrame = document.getElementById('previewFrame');
+    const placeholder  = document.getElementById('placeholder');
+
+    // ── File selection ─────────────────────────────────────────────────────────
+    uploadZone.addEventListener('click', () => fileInput.click());
+
+    uploadZone.addEventListener('dragover', e => {
+      e.preventDefault();
+      uploadZone.classList.add('drag');
+    });
+    uploadZone.addEventListener('dragleave', () => uploadZone.classList.remove('drag'));
+    uploadZone.addEventListener('drop', e => {
+      e.preventDefault();
+      uploadZone.classList.remove('drag');
+      const f = e.dataTransfer.files[0];
+      if (f) setFile(f);
+    });
+
+    fileInput.addEventListener('change', () => {
+      if (fileInput.files[0]) setFile(fileInput.files[0]);
+    });
+
+    function setFile(f) {
+      selectedFile = f;
+      selectedFileName.textContent = f.name;
+      processBtn.disabled = false;
+      clearStatus();
+    }
+
+    // ── Process ────────────────────────────────────────────────────────────────
+    processBtn.addEventListener('click', async () => {
+      if (!selectedFile) return;
+
+      processBtn.disabled = true;
+      setStatus('processing', 'Processing… this may take 30–90 seconds');
+      hidePreview();
+
+      const form = new FormData();
+      form.append('file', selectedFile);
+
+      try {
+        const res = await fetch('/process', { method: 'POST', body: form });
+        const data = await res.json();
+
+        if (!res.ok) {
+          setStatus('err', data.detail || 'Processing failed.');
+          processBtn.disabled = false;
+          return;
+        }
+
+        setStatus('ok', `Done! Saved as "${data.name}"`);
+        currentId = data.id;
+
+        showMeta(data);
+        if (data.id) {
+          setDownloads(data.id, data.name);
+          showPreview(data.id, data.name);
+          addToSession(data.id, data.name);
+        }
+
+      } catch (e) {
+        setStatus('err', 'Network error: ' + e.message);
+      } finally {
+        processBtn.disabled = false;
+      }
+    });
+
+    function setStatus(type, msg) {
+      statusBox.className = 'status-box visible ' + (type === 'ok' ? 'ok' : type === 'err' ? 'err' : '');
+      statusSpinner.style.display = type === 'processing' ? 'block' : 'none';
+      statusText.textContent = msg;
+    }
+
+    function clearStatus() {
+      statusBox.className = 'status-box';
+    }
+
+    // ── Meta panel ─────────────────────────────────────────────────────────────
+    function showMeta(data) {
+      metaSection.style.display = 'block';
+      const ext = data.file?.split('.').pop()?.toLowerCase();
+      const fileType = ext === 'pdf' ? 'pdf' : 'image';
+      metaBox.innerHTML = `
+        <div class="meta-row"><span>Name</span><span>${data.name}</span></div>
+        <div class="meta-row"><span>File</span><span>${data.file}</span></div>
+        <div class="meta-row"><span>Type</span><span>${fileType}</span></div>
+        <div class="meta-row"><span>MongoDB ID</span><span style="font-size:10px;word-break:break-all">${data.id || '—'}</span></div>
+      `;
+    }
+
+    function showMetaFromHistory(menu) {
+      metaSection.style.display = 'block';
+      metaBox.innerHTML = `
+        <div class="meta-row"><span>Name</span><span>${menu.name}</span></div>
+        <div class="meta-row"><span>Type</span><span>${menu.file_type || '—'}</span></div>
+        <div class="meta-row"><span>Elements</span><span><span class="badge">${menu.num_elements ?? '—'}</span></span></div>
+        <div class="meta-row"><span>Categories</span><span><span class="badge">${menu.num_categories ?? '—'}</span></span></div>
+      `;
+    }
+
+    // ── Downloads ──────────────────────────────────────────────────────────────
+    function setDownloads(id, name) {
+      dlData.href = `/menus/${id}/download/data`;
+      dlData.download = `${name}_menu_data.json`;
+      dlData.classList.remove('disabled');
+
+      dlTemplate.href = `/menus/${id}/download/template`;
+      dlTemplate.download = `${name}_template.json`;
+      dlTemplate.classList.remove('disabled');
+    }
+
+    function clearDownloads() {
+      dlData.href = '#';
+      dlData.classList.add('disabled');
+      dlTemplate.href = '#';
+      dlTemplate.classList.add('disabled');
+    }
+
+    // ── Preview ────────────────────────────────────────────────────────────────
+    function showPreview(id, name) {
+      previewSpinner.style.display = 'inline-block';
+      previewName.textContent = name;
+      placeholder.style.display = 'none';
+      previewFrame.style.display = 'none';
+
+      previewFrame.onload = () => {
+        previewSpinner.style.display = 'none';
+        previewFrame.style.display = 'block';
+      };
+      previewFrame.src = `/static/renderer.html?id=${encodeURIComponent(id)}`;
+    }
+
+    function hidePreview() {
+      previewFrame.style.display = 'none';
+      previewFrame.src = '';
+      placeholder.style.display = 'flex';
+      previewName.textContent = 'Processing…';
+      previewSpinner.style.display = 'none';
+    }
+
+    // ── Session history dropdown ───────────────────────────────────────────────
+    function addToSession(id, name) {
+      sessionProcessed.push({ id, name });
+      historySelect.innerHTML = '<option value="">— select a previous menu —</option>';
+      for (const m of sessionProcessed) {
+        const opt = document.createElement('option');
+        opt.value = JSON.stringify({ id: m.id, name: m.name });
+        opt.textContent = m.name;
+        historySelect.appendChild(opt);
+      }
+    }
+
+    historySelect.addEventListener('change', e => {
+      if (!e.target.value) return;
+      const { id, name } = JSON.parse(e.target.value);
+      currentId = id;
+      setDownloads(id, name);
+      showPreview(id, name);
+    });
+  </script>
+</body>
+</html>

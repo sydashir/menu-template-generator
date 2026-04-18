@@ -1,30 +1,63 @@
+# Python
 __pycache__/
 *.pyc
 *.pyo
-.env
-.venv/
-venv/
 *.egg-info/
 dist/
 build/
-*.psd
+
+# Environment
+.env
+.venv/
+venv/
+
+# OS
 .DS_Store
-Menu Template/
 
-# Generated test output and comparison scripts
-extractor_comparison.json
+# Secrets / local config
+.claude/
+
+# Generated outputs
+outputs/
+outputs_test/
+test_results/
+gemini_tests/
+
+# Old/versioned dev files
+builder_new.py
+builder_old.py
+extractor_new.py
+extractor_old.py
+pipeline_old.py
+pipeline_v_minus_1.py
+json_canvas_renderer.html
+
+# One-off dev scripts
+reprocess_premier.py
 compare_extractors.py
+extractor_comparison.json
+run_gemini_tests.py
+run_test_AMI.py
+run_test_SRQ_2.py
+verify_masking.py
+verify_masking_ami.py
+test_images.py
 
-# Session/task notes (not source code)
+# Notes / context docs
+context.md
+latest_context.md
 PROGRESS.md
 SESSION_NOTES.md
 SESSION_NOTES_S4.md
 plannings.md
 surya.md
 Copy of *.md
-.agents/
 *.docx
-test_images.py
-outputs_test/
-gemini_tests/
-run_gemini_tests.py
+.agents/
+
+# Dev requirements (use requirements-prod.txt)
+requirements.txt
+
+# Large assets
+Menu Template/
+*.psd
