@@ -760,15 +760,19 @@ _surya_det_model = None
 _surya_det_processor = None
 _surya_rec_model = None
 _surya_rec_processor = None
+_surya_det_predictor = None  # surya >=0.17 API
+_surya_rec_predictor = None  # surya >=0.17 API
+_surya_api_version = None    # "new" | "old"
 
 
 def _load_surya_models() -> bool:
     """Lazy-load and cache Surya OCR models. Returns True if successful."""
     global _surya_det_model, _surya_det_processor, _surya_rec_model, _surya_rec_processor
-    if _surya_det_model is not None:
+    global _surya_det_predictor, _surya_rec_predictor, _surya_api_version
+    if _surya_api_version is not None:
         return True
     try:
-        # Enable MPS (Apple Silicon GPU) if available — ~5-10x faster than CPU
+        # Enable MPS (Apple Silicon GPU) if available
         try:
             import torch as _torch
             if _torch.backends.mps.is_available():
@@ -779,6 +783,20 @@ def _load_surya_models() -> bool:
         except Exception:
             pass
 
+        # Try new API first (surya >= 0.17)
+        try:
+            from surya.detection import DetectionPredictor
+            from surya.recognition import RecognitionPredictor
+            print("[surya] loading models (first run — may download ~1 GB)…")
+            _surya_det_predictor = DetectionPredictor()
+            _surya_rec_predictor = RecognitionPredictor()
+            _surya_api_version = "new"
+            print("[surya] models ready (API v0.17+)")
+            return True
+        except ImportError:
+            pass
+
+        # Fall back to old API (surya 0.4.x)
         from surya.model.detection.segformer import (
             load_model as _det_model,
             load_processor as _det_proc,
@@ -790,7 +808,8 @@ def _load_surya_models() -> bool:
         _surya_det_processor = _det_proc()
         _surya_rec_model = _rec_model()
         _surya_rec_processor = _rec_proc()
-        print("[surya] models ready")
+        _surya_api_version = "old"
+        print("[surya] models ready (API v0.4.x)")
         return True
     except Exception as exc:
         print(f"[surya] model load failed: {exc}")
@@ -807,11 +826,14 @@ def extract_blocks_surya(img: Image.Image) -> list:
         return []
     try:
         from surya.ocr import run_ocr
-        results = run_ocr(
-            [img], [["en"]],
-            _surya_det_model, _surya_det_processor,
-            _surya_rec_model, _surya_rec_processor,
-        )
+        if _surya_api_version == "new":
+            results = run_ocr([img], [["en"]], _surya_det_predictor, _surya_rec_predictor)
+        else:
+            results = run_ocr(
+                [img], [["en"]],
+                _surya_det_model, _surya_det_processor,
+                _surya_rec_model, _surya_rec_processor,
+            )
         blocks = []
         for line in results[0].text_lines:
             text = (line.text or "").strip()
