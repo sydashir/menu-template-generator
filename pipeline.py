@@ -199,7 +199,12 @@ def process(file_path: str, output_dir: str, file_stem: str = None) -> list[dict
                             avail_w = max(0, int(next_right_in_band) - int(logo_right) - 5)
                             extra_w = min(max_extra_w, avail_w)
                         else:
-                            extra_w = min(max_extra_w, max(0, canvas_w // 2 - int(logo_right)))
+                            # Allow centered logos to expand significantly if no constraints
+                            is_centered = (ex + ew/2) > (canvas_w * 0.4) and (ex + ew/2) < (canvas_w * 0.6)
+                            if is_centered:
+                                extra_w = min(max_extra_w, max(0, canvas_w - 60 - int(logo_right)))
+                            else:
+                                extra_w = min(max_extra_w, max(0, canvas_w // 2 - int(logo_right)))
 
                         ew_ext = min(ew + extra_w, canvas_w - ex)
                         

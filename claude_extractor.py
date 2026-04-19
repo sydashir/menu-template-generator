@@ -484,28 +484,41 @@ def _dedup_text_elements(elements: list) -> list:
         bd = el.get("bbox") or {}
         content = str(el.get("content", ""))
         words = get_word_set(content)
+        col = el.get("column", 0)
         
         duplicate_idx = None
         for i, ex_el in enumerate(deduped):
             ex_bd = ex_el.get("bbox") or {}
             ex_content = str(ex_el.get("content", ""))
             ex_words = get_word_set(ex_content)
+            ex_col = ex_el.get("column", 0)
             
+            # Case 0: Identical word set -> merge regardless of column or IoU
+            # (Fixes "ghosting" where Claude hallucinates a copy or misassigns column)
+            if words == ex_words:
+                # IMPORTANT: Prefer earlier elements (Surya blocks) for coordinates.
+                # Claude's decorative copies are added later and often shifted.
+                # Only replace if current is a category_header and ex is not.
+                if el.get("subtype") == "category_header" and ex_el.get("subtype") != "category_header":
+                    # Keep current but try to snap it later
+                    deduped[i] = el
+                else:
+                    # Keep existing (Surya)
+                    pass
+                duplicate_idx = i
+                break
+
             iou = _bbox_iou(bd, ex_bd)
             
-            # Case 1: Identical or subset text + any significant overlap
-            # If they are the same words, merge them regardless of slight shifts.
+            # Case 1: Subset text + significant overlap
             if iou > 0.2:
-                if words == ex_words:
-                    duplicate_idx = i
-                    break
                 if words.issubset(ex_words):
                     duplicate_idx = i
                     break
                 if ex_words.issubset(words):
                     # Current element is more complete, replace the existing one
                     ex_el["content"] = content
-                    ex_el["bbox"] = bd # Use the larger/better bbox
+                    ex_el["bbox"] = bd 
                     duplicate_idx = i
                     break
 
@@ -1093,11 +1106,19 @@ def extract_layout_surya_som(img: Image.Image) -> dict | None:
         _px = "left" if _lb_cx < orig_w * 0.35 else ("right" if _lb_cx > orig_w * 0.65 else "center")
         elements.append({"type": "logo", "bbox": lb, "position_hint": f"{_py}_{_px}"})
 
-    # Snap cursive section headers to just above their content blocks (Surya pixel-accurate)
-    elements = _snap_decorative_headers(elements)
-
     print(f"[surya_som] built {len(elements)} elements "
           f"(ocr={len(surya_blocks)}, decorative={len(data.get('decorative_elements', []))})")
+    
+    # --- Post-processing (The 'Precision Engine' cleanup) ---
+    # 1. Deduplicate text (Word-match merge Surya vs Claude's hallucinated decorative copies)
+    elements = _dedup_text_elements(elements)
+    
+    # 2. Snap decorative headers to content below and center in column
+    elements = _snap_decorative_headers(elements, orig_w=orig_w)
+    
+    # 3. Mask any text/separators inside the logo area
+    elements = _mask_logo_elements(elements)
+
     return {
         "elements": elements,
         "menu_data": data.get("menu_data", {}),
@@ -1205,10 +1226,10 @@ def _mask_logo_elements(elements: list) -> list:
             lh = lbd.get("h", 0)
             lx = lbd.get("x", 0)
             ly = lbd.get("y", 0)
-            # Expand logo clearance zone: 60px below (catches misplaced logo text),
-            # 30px on sides/top.  Use a proportional cap so we don't eat page content.
-            clear_y = min(lh * 0.5, 70.0)
-            clear_x = min(lw * 0.25, 50.0)
+            # Expand logo clearance zone: catch misplaced logo text/fragments.
+            # Use larger clearance for branding areas.
+            clear_y = min(lh * 0.7, 100.0) # increased from 70
+            clear_x = min(lw * 0.4, 80.0)  # increased from 50
             lx1 = lx - clear_x
             ly1 = ly - 30
             lx2 = lx + lw + clear_x
@@ -1222,44 +1243,49 @@ def _mask_logo_elements(elements: list) -> list:
     return result
 
 
-def _snap_decorative_headers(elements: list) -> list:
+def _snap_decorative_headers(elements: list, orig_w: float = 1200) -> list:
     """
     Post-processing: anchor cursive section headers to just above the first
     Surya-detected (non-decorative) text block directly below them in the same column.
 
     Claude's decorative element y-estimates can be off by 50-150px.  Surya's OCR
     blocks are pixel-accurate.  This function snaps each decorative header so its
-    bottom sits 4px above the nearest content block below it, eliminating the
+    bottom sits 6px above the nearest content block below it, eliminating the
     visual overlap between section headers and the "choose one" / item lines.
 
     Only adjusts y (and h if the estimated height is unreasonably large).
+    Also centers headers in their assigned column if they are 'category_header's.
     """
     # Collect non-decorative text blocks sorted by (column, y)
     content_blocks = [
         e for e in elements
         if e.get("type") == "text"
-        and e.get("style", {}).get("font_family") != "decorative-script"
+        and e.get("style", {}).get("font_family") not in ("decorative-script", "display")
+        and e.get("subtype") != "category_header"
     ]
 
     result = list(elements)
     for i, el in enumerate(result):
         if el.get("type") != "text":
             continue
-        if el.get("style", {}).get("font_family") != "decorative-script":
+        
+        is_decorative = el.get("style", {}).get("font_family") in ("decorative-script", "display")
+        is_header = el.get("subtype") == "category_header"
+        
+        if not (is_decorative or is_header):
             continue
 
         el_col = el.get("column", 0)
         el_bd = el.get("bbox", {})
-        el_top = el_bd.get("y", 0)
+        el_cy = el_bd.get("y", 0) + (el_bd.get("h", 40) / 2) # use center y
         el_h = el_bd.get("h", 40)
 
         # Find the first content block in the same column that starts below
-        # the TOP of this decorative element (use top, not center, to handle
-        # cases where Claude placed the element too high)
+        # this decorative element.
         candidates = [
             b for b in content_blocks
             if b.get("column", 0) == el_col
-            and b.get("bbox", {}).get("y", 0) > el_top
+            and b.get("bbox", {}).get("y", 0) > el_cy
         ]
         if not candidates:
             continue
@@ -1267,28 +1293,41 @@ def _snap_decorative_headers(elements: list) -> list:
         first_below = min(candidates, key=lambda b: b["bbox"]["y"])
         first_y = first_below["bbox"]["y"]
 
-        gap = 4.0
-        # Cap height: decorative headers are rarely taller than 70px
-        capped_h = min(el_h, 70.0)
+        gap = 6.0 # Slightly larger gap for better visual breathing room
+        # Cap height: decorative headers are rarely taller than 80px
+        capped_h = min(el_h, 80.0)
         new_y = first_y - gap - capped_h
 
         if new_y < 0:
             new_y = max(0.0, first_y - gap - capped_h)
 
-        if abs(new_y - el_top) > 2:  # only update if there's a meaningful change
+        # --- Horizontal Snapping ---
+        # Center headers in their column if they are centered or likely intended to be.
+        new_x = el_bd.get("x", 0)
+        if el.get("style", {}).get("text_align") == "center" or is_header:
+            # Dynamically determine column count from all text elements
+            max_col = max((e.get("column", 0) for e in elements if e.get("type") == "text"), default=0)
+            num_cols = max_col + 1
+            col_w = orig_w / num_cols
+            col_center = (el_col * col_w) + (col_w / 2)
+            new_x = col_center - (el_bd.get("w", 100) / 2)
+
+        if abs(new_y - el_bd.get("y", 0)) > 2 or abs(new_x - el_bd.get("x", 0)) > 2:
             result[i] = dict(el)
             result[i]["bbox"] = dict(el_bd)
             result[i]["bbox"]["y"] = float(new_y)
+            result[i]["bbox"]["x"] = float(new_x)
             result[i]["bbox"]["h"] = float(capped_h)
             if result[i].get("style"):
                 result[i]["style"] = dict(result[i]["style"])
                 result[i]["style"]["font_size"] = round(capped_h * 0.75, 1)
+                result[i]["style"]["text_align"] = "center"
 
     return result
 
 
 def merge_layouts(primary: dict | None, secondary: dict | None,
-                  math_first: bool = False) -> dict | None:
+                  math_first: bool = False, orig_w: float = 1200) -> dict | None:
     """
     Merge two layout extraction results for maximum element coverage.
     primary (prompt-based) is the main source — its elements are kept as-is.
@@ -1368,6 +1407,10 @@ def merge_layouts(primary: dict | None, secondary: dict | None,
     # Logo union: merge nearby logo fragments into a single union bbox rather than
     # discarding — Claude often splits a complex logo (emblem + frame) into parts.
     merged = _enforce_single_logo(merged)
+
+    # Post-processing: snap shifted decorative headers to their content below.
+    # Eliminates overlap between cursive headers and item text.
+    merged = _snap_decorative_headers(merged, orig_w=orig_w)
 
     # Logo masking: delete text/separators inside the detected logo area to prevent duplicates
     merged = _mask_logo_elements(merged)
