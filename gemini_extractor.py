@@ -100,20 +100,30 @@ def extract_layout_surya_som_gemini(img: Image.Image) -> dict | None:
         annotated_bytes = io.BytesIO()
         send_img.save(annotated_bytes, format="JPEG", quality=85)
 
-        response = client.models.generate_content(
-            model="gemini-2.0-flash-001",
-            contents=[
-                "IMAGE 1 (Clean):",
-                types.Part.from_bytes(data=clean_bytes.getvalue(), mime_type="image/jpeg"),
-                "IMAGE 2 (Annotated):",
-                types.Part.from_bytes(data=annotated_bytes.getvalue(), mime_type="image/jpeg"),
-                user_msg
-            ],
-            config=types.GenerateContentConfig(
-                system_instruction=_GEMINI_SYSTEM_PROMPT,
-                response_mime_type="application/json",
-            )
-        )
+        import time
+        for attempt in range(3):
+            try:
+                response = client.models.generate_content(
+                    model="gemini-3-flash-preview",
+                    contents=[
+                        "IMAGE 1 (Clean):",
+                        types.Part.from_bytes(data=clean_bytes.getvalue(), mime_type="image/jpeg"),
+                        "IMAGE 2 (Annotated):",
+                        types.Part.from_bytes(data=annotated_bytes.getvalue(), mime_type="image/jpeg"),
+                        user_msg
+                    ],
+                    config=types.GenerateContentConfig(
+                        system_instruction=_GEMINI_SYSTEM_PROMPT,
+                        response_mime_type="application/json",
+                    )
+                )
+                break
+            except Exception as e:
+                if "429" in str(e) and attempt < 2:
+                    print(f"[gemini_som] rate limit hit, retrying in 10s... (attempt {attempt+1})")
+                    time.sleep(10)
+                    continue
+                raise e
         
         # Strip markdown if present
         text = response.text
@@ -205,7 +215,7 @@ def extract_full_layout_via_gemini(img: Image.Image) -> dict | None:
     
     try:
         response = client.models.generate_content(
-            model="gemini-2.0-flash-001",
+            model="gemini-3-flash-preview",
             contents=[
                 types.Part.from_bytes(data=buf.getvalue(), mime_type="image/jpeg"),
                 f"Extract complete menu layout for {orig_w}x{orig_h} image into JSON."
