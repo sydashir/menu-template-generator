@@ -25,7 +25,13 @@ def _get_client() -> anthropic.Anthropic | None:
     key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
     if not key:
         return None
-    _client = anthropic.Anthropic(api_key=key)
+    kwargs: dict = {"api_key": key}
+    # Allow routing through a proxy via ANTHROPIC_BASE_URL env var
+    base_url = os.environ.get("ANTHROPIC_BASE_URL", "").strip()
+    if base_url:
+        kwargs["base_url"] = base_url
+    # Allow HTTP proxy via HTTPS_PROXY env var (httpx respects this automatically)
+    _client = anthropic.Anthropic(**kwargs)
     return _client
 
 
@@ -794,6 +800,9 @@ def _load_surya_models() -> bool:
             # Force model weights to load (lazy init) so config.bbox_size is populated
             _dummy = _PILImage.fromarray(_np.zeros((64, 64, 3), dtype=_np.uint8))
             _surya_det_predictor([_dummy])
+            # Patch missing bbox_size — cached model config predates surya 0.17 schema
+            if not hasattr(_surya_det_predictor.model.config, "bbox_size"):
+                _surya_det_predictor.model.config.bbox_size = 96
             _surya_rec_predictor = RecognitionPredictor(_surya_det_predictor)
             _surya_api_version = "new"
             print("[surya] models ready (API v0.17+)")
