@@ -28,6 +28,7 @@ from claude_extractor import (
     merge_layouts,
     _mask_logo_elements,
 )
+from gemini_extractor import extract_layout_surya_som_gemini, extract_full_layout_via_gemini
 
 SUPPORTED_PDF = {".pdf"}
 SUPPORTED_IMG = {".jpg", ".jpeg", ".png", ".webp"}
@@ -371,13 +372,26 @@ def _run_image_ensemble(img) -> dict | None:
     """
     # Primary: Surya+SoM — pixel-accurate coordinates for all readable text,
     # Claude fills in decorative/script headers via dual-image prompting.
-    result = extract_layout_surya_som(img)
-    if result is not None:
-        return result
+    try:
+        result = extract_layout_surya_som(img)
+        if result is not None:
+            return result
+    except Exception as e:
+        print(f"[pipeline] Claude Surya+SoM failed: {e}. Trying Gemini fallback...")
+
+    # Fallback to Gemini 2.0 Flash (Bypasses Anthropic 403 blocks)
+    print("[pipeline] Falling back to Gemini 2.0 Flash (Precision Path)")
+    result_gem = extract_layout_surya_som_gemini(img)
+    if result_gem is not None:
+        return result_gem
 
     # Fallback: Claude Vision tool_use (holistic, no Surya)
-    print("[pipeline] Surya unavailable — falling back to Claude Vision tool_use")
-    return extract_full_layout_via_tool_use(img)
+    try:
+        print("[pipeline] Surya unavailable — trying Claude Vision tool_use")
+        return extract_full_layout_via_tool_use(img)
+    except Exception as e:
+        print(f"[pipeline] Claude Holistic failed: {e}. Trying Gemini Holistic...")
+        return extract_full_layout_via_gemini(img)
 
 
 def _process_side_image(img) -> dict | None:

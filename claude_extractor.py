@@ -1020,12 +1020,9 @@ def extract_layout_surya_som(img: Image.Image) -> dict | None:
                 ],
             }],
         )
-    except anthropic.RateLimitError as exc:
-        print(f"[surya_som] rate_limit: {exc}")
-        return None
-    except anthropic.APIError as exc:
-        print(f"[surya_som] api_error: {exc}")
-        return None
+    except (anthropic.RateLimitError, anthropic.APIError) as exc:
+        # Re-raise to trigger the Gemini fallback in pipeline.py
+        raise exc
 
     if response.stop_reason == "max_tokens":
         print("[surya_som] truncated at max_tokens — falling back")
