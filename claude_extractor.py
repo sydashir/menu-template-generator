@@ -766,15 +766,16 @@ _surya_det_model = None
 _surya_det_processor = None
 _surya_rec_model = None
 _surya_rec_processor = None
-_surya_det_predictor = None  # surya >=0.17 API
-_surya_rec_predictor = None  # surya >=0.17 API
-_surya_api_version = None    # "new" | "old"
+_surya_det_predictor = None        # surya >=0.17 API
+_surya_rec_predictor = None        # surya >=0.17 API
+_surya_foundation_predictor = None # surya >=0.17 API
+_surya_api_version = None          # "new" | "old"
 
 
 def _load_surya_models() -> bool:
     """Lazy-load and cache Surya OCR models. Returns True if successful."""
     global _surya_det_model, _surya_det_processor, _surya_rec_model, _surya_rec_processor
-    global _surya_det_predictor, _surya_rec_predictor, _surya_api_version
+    global _surya_det_predictor, _surya_rec_predictor, _surya_foundation_predictor, _surya_api_version
     if _surya_api_version is not None:
         return True
     try:
@@ -791,19 +792,13 @@ def _load_surya_models() -> bool:
 
         # Try new API first (surya >= 0.17)
         try:
-            import numpy as _np
-            from PIL import Image as _PILImage
-            from surya.detection import DetectionPredictor
+            from surya.foundation import FoundationPredictor
             from surya.recognition import RecognitionPredictor
+            from surya.detection import DetectionPredictor
             print("[surya] loading models (first run — may download ~1 GB)…")
+            _surya_foundation_predictor = FoundationPredictor()
+            _surya_rec_predictor = RecognitionPredictor(_surya_foundation_predictor)
             _surya_det_predictor = DetectionPredictor()
-            # Force model weights to load (lazy init) so config.bbox_size is populated
-            _dummy = _PILImage.fromarray(_np.zeros((64, 64, 3), dtype=_np.uint8))
-            _surya_det_predictor([_dummy])
-            # Patch missing bbox_size — cached model config predates surya 0.17 schema
-            if not hasattr(_surya_det_predictor.model.config, "bbox_size"):
-                _surya_det_predictor.model.config.bbox_size = 96
-            _surya_rec_predictor = RecognitionPredictor(_surya_det_predictor)
             _surya_api_version = "new"
             print("[surya] models ready (API v0.17+)")
             return True
@@ -839,10 +834,10 @@ def extract_blocks_surya(img: Image.Image) -> list:
     if not _load_surya_models():
         return []
     try:
-        from surya.ocr import run_ocr
         if _surya_api_version == "new":
-            results = run_ocr([img], [["en"]], _surya_det_predictor, _surya_rec_predictor)
+            results = _surya_rec_predictor([img], det_predictor=_surya_det_predictor)
         else:
+            from surya.ocr import run_ocr
             results = run_ocr(
                 [img], [["en"]],
                 _surya_det_model, _surya_det_processor,
