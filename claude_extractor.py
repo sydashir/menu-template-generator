@@ -785,10 +785,15 @@ def _load_surya_models() -> bool:
 
         # Try new API first (surya >= 0.17)
         try:
+            import numpy as _np
+            from PIL import Image as _PILImage
             from surya.detection import DetectionPredictor
             from surya.recognition import RecognitionPredictor
             print("[surya] loading models (first run — may download ~1 GB)…")
             _surya_det_predictor = DetectionPredictor()
+            # Force model weights to load (lazy init) so config.bbox_size is populated
+            _dummy = _PILImage.fromarray(_np.zeros((64, 64, 3), dtype=_np.uint8))
+            _surya_det_predictor([_dummy])
             _surya_rec_predictor = RecognitionPredictor(_surya_det_predictor)
             _surya_api_version = "new"
             print("[surya] models ready (API v0.17+)")
