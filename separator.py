@@ -51,13 +51,20 @@ def _detect_direction(binary: np.ndarray, w: int, h: int, direction: str) -> Lis
         x, y, cw, ch = cv2.boundingRect(cnt)
 
         if direction == "horizontal":
-            if cw < w * 0.04:
+            # Require at least 10% of image width — filters illustration noise.
+            if cw < w * 0.10:
+                continue
+            # Filter ornamental wavy/curly rules: their ragged edges make the
+            # morphological contour appear 4-8px tall. Real menu separators are
+            # 1-3px tall (thin rule) or ≥8px (thick decorative bar, handled as box).
+            # Skip the 4-7px band which is almost exclusively decorative ornaments.
+            if 4 <= ch <= 7:
                 continue
             results.append(RawLine(x1=float(x), y1=float(y),
                                    x2=float(x + cw), y2=float(y + ch),
                                    orientation="horizontal"))
         else:
-            if ch < h * 0.04:
+            if ch < h * 0.08:
                 continue
             # Reject full-page-height lines at page edges (decorative page borders)
             is_edge = x < w * 0.07 or (x + cw) > w * 0.93

@@ -11,9 +11,9 @@ from dotenv import load_dotenv
 
 from models import MenuData, MenuCategory, MenuItem
 from claude_extractor import (
-    _MAX_IMG_DIM, _bbox_iou, _dedup_text_elements, 
-    _snap_decorative_headers, _mask_logo_elements, 
-    _enforce_single_logo, _draw_som_annotations, 
+    _MAX_IMG_DIM, _bbox_iou, _dedup_text_elements,
+    _snap_decorative_headers, _mask_logo_elements,
+    _enforce_single_logo, _draw_som_annotations,
     extract_blocks_surya
 )
 

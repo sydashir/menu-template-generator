@@ -27,8 +27,8 @@ from claude_extractor import (
     extract_layout_surya_som,
     merge_layouts,
     _mask_logo_elements,
+    _refine_logo_bbox_by_pixels,
 )
-from gemini_extractor import extract_layout_surya_som_gemini, extract_full_layout_via_gemini
 
 SUPPORTED_PDF = {".pdf"}
 SUPPORTED_IMG = {".jpg", ".jpeg", ".png", ".webp"}
@@ -138,12 +138,16 @@ def process(file_path: str, output_dir: str, file_stem: str = None) -> list[dict
                     else:
                         lw = abs(ln.x2 - ln.x1) if ln.orientation == "horizontal" else max(2.0, abs(ln.x2 - ln.x1))
                         lh = abs(ln.y2 - ln.y1) if ln.orientation == "vertical" else max(2.0, abs(ln.y2 - ln.y1))
+                        # Cap stroke_width to 2.5px — contour heights/widths can be
+                        # inflated by morphological dilation; real menu lines are 1-3px.
+                        raw_stroke = lh if ln.orientation == "horizontal" else lw
+                        stroke_w = min(float(raw_stroke), 2.5)
                         elements.append({
                             "type": "separator",
                             "subtype": "horizontal_line" if ln.orientation == "horizontal" else "vertical_line",
                             "orientation": ln.orientation,
                             "bbox": {"x": float(x1), "y": float(y1), "w": float(lw), "h": float(lh)},
-                            "style": {"color": "#000000", "stroke_width": float(lh if ln.orientation == "horizontal" else lw), "stroke_style": "solid"},
+                            "style": {"color": "#000000", "stroke_width": stroke_w, "stroke_style": "solid"},
                         })
                 claude_layout["elements"] = elements
 
@@ -170,50 +174,65 @@ def process(file_path: str, output_dir: str, file_stem: str = None) -> list[dict
                         logo_bottom = ey + eh
                         logo_right = ex + ew
 
-                        # --- Smart Height Extension ---
-                        # Find nearest element directly below logo_bottom, stop 5px before it.
-                        next_below_y = float("inf")
-                        for other_el in elements:
-                            if other_el is el: continue
-                            obd = other_el.get("bbox") or {}
-                            oy = float(obd.get("y", 0))
-                            if oy > logo_bottom:
-                                next_below_y = min(next_below_y, oy)
-
-                        max_extra_h = min(int(eh * 0.20), 60)
-                        avail_h = max(0, int(next_below_y) - int(logo_bottom) - 5) if next_below_y < float("inf") else max_extra_h
-                        extra_h = min(max_extra_h, avail_h)
-                        eh_ext = eh + extra_h
-
-                        # --- Smart Width Extension (y-band aware) ---
-                        # Only consider elements that vertically overlap the logo y-range as constraints.
-                        next_right_in_band = float("inf")
-                        for other_el in elements:
-                            if other_el is el: continue
-                            obd = other_el.get("bbox") or {}
-                            ox, oy, oh = float(obd.get("x", 0)), float(obd.get("y", 0)), float(obd.get("h", 1))
-                            if ox > logo_right and oy < (ey + eh_ext) and (oy + oh) > ey:
-                                next_right_in_band = min(next_right_in_band, ox)
-
-                        max_extra_w = int(ew * 1.80)
-                        if next_right_in_band < float("inf"):
-                            avail_w = max(0, int(next_right_in_band) - int(logo_right) - 5)
-                            extra_w = min(max_extra_w, avail_w)
+                        # --- Primary: Pixel-based logo bbox refinement ---
+                        # Use OpenCV to find the true ink extent of the logo graphic,
+                        # eliminating heuristic expansion entirely when it succeeds.
+                        refined = _refine_logo_bbox_by_pixels(side_img, bd, canvas_w, canvas_h)
+                        if refined and refined["w"] > 20 and refined["h"] > 20:
+                            bd.update(refined)
+                            ex, ey = bd["x"], bd["y"]
+                            ew, eh = bd["w"], bd["h"]
                         else:
-                            # Allow centered logos to expand significantly if no constraints
-                            is_centered = (ex + ew/2) > (canvas_w * 0.4) and (ex + ew/2) < (canvas_w * 0.6)
-                            if is_centered:
-                                extra_w = min(max_extra_w, max(0, canvas_w - 60 - int(logo_right)))
-                            else:
-                                extra_w = min(max_extra_w, max(0, canvas_w // 2 - int(logo_right)))
+                            # --- Fallback: Heuristic expansion ---
+                            # Find nearest element directly below logo_bottom, stop 5px before it.
+                            next_below_y = float("inf")
+                            for other_el in elements:
+                                if other_el is el: continue
+                                obd = other_el.get("bbox") or {}
+                                oy = float(obd.get("y", 0))
+                                if oy > logo_bottom:
+                                    next_below_y = min(next_below_y, oy)
 
-                        ew_ext = min(ew + extra_w, canvas_w - ex)
-                        
-                        # Update original bbox for the template
-                        bd["w"], bd["h"] = float(ew_ext), float(eh_ext)
+                            max_extra_h = min(int(eh * 0.35), 120)
+                            avail_h = max(0, int(next_below_y) - int(logo_bottom) - 5) if next_below_y < float("inf") else max_extra_h
+                            extra_h = min(max_extra_h, avail_h)
+                            eh_ext = eh + extra_h
+
+                            next_right_in_band = float("inf")
+                            next_left_in_band = 0.0
+                            for other_el in elements:
+                                if other_el is el: continue
+                                obd = other_el.get("bbox") or {}
+                                ox, oy, oh = float(obd.get("x", 0)), float(obd.get("y", 0)), float(obd.get("h", 1))
+                                ow = float(obd.get("w", 0))
+                                if oy < (ey + eh_ext) and (oy + oh) > ey:
+                                    if ox > logo_right:
+                                        next_right_in_band = min(next_right_in_band, ox)
+                                    elif (ox + ow) < ex:
+                                        next_left_in_band = max(next_left_in_band, ox + ow)
+
+                            max_extra_w = int(ew * 2.0)
+                            if next_right_in_band < float("inf"):
+                                avail_w = max(0, int(next_right_in_band) - int(logo_right) + 25)
+                                extra_w = min(max_extra_w, avail_w)
+                            else:
+                                is_centered = (ex + ew/2) > (canvas_w * 0.4) and (ex + ew/2) < (canvas_w * 0.6)
+                                if is_centered:
+                                    extra_w = min(max_extra_w, max(0, canvas_w - 60 - int(logo_right)))
+                                else:
+                                    extra_w = min(max_extra_w, max(0, canvas_w // 2 - int(logo_right)))
+
+                            avail_left = max(0, int(ex) - int(next_left_in_band) - 5)
+                            extra_left = min(int(ew * 0.30), 80, avail_left)
+                            ew_ext = min(ew + extra_w + extra_left, canvas_w)
+
+                            bd["x"] = float(ex - extra_left)
+                            bd["w"], bd["h"] = float(ew_ext), float(eh_ext)
+                            ex = bd["x"]
+                            ew, eh = bd["w"], bd["h"]
 
                         x1, y1 = max(0, int(ex)), max(0, int(ey))
-                        x2, y2 = min(canvas_w, int(ex + ew_ext)), min(canvas_h, int(ey + eh_ext))
+                        x2, y2 = min(canvas_w, int(ex + ew)), min(canvas_h, int(ey + eh))
                         
                         if x2 > x1 and y2 > y1:
                             crop = side_img.crop((x1, y1, x2, y2))
@@ -377,21 +396,11 @@ def _run_image_ensemble(img) -> dict | None:
         if result is not None:
             return result
     except Exception as e:
-        print(f"[pipeline] Claude Surya+SoM failed: {e}. Trying Gemini fallback...")
-
-    # Fallback to Gemini 2.0 Flash (Bypasses Anthropic 403 blocks)
-    print("[pipeline] Falling back to Gemini 2.0 Flash (Precision Path)")
-    result_gem = extract_layout_surya_som_gemini(img)
-    if result_gem is not None:
-        return result_gem
+        print(f"[pipeline] Claude Surya+SoM failed: {e}")
 
     # Fallback: Claude Vision tool_use (holistic, no Surya)
-    try:
-        print("[pipeline] Surya unavailable — trying Claude Vision tool_use")
-        return extract_full_layout_via_tool_use(img)
-    except Exception as e:
-        print(f"[pipeline] Claude Holistic failed: {e}. Trying Gemini Holistic...")
-        return extract_full_layout_via_gemini(img)
+    print("[pipeline] Surya+SoM unavailable — falling back to Claude Vision tool_use")
+    return extract_full_layout_via_tool_use(img)
 
 
 def _process_side_image(img) -> dict | None:
@@ -402,12 +411,12 @@ def _process_side_image(img) -> dict | None:
     """
     orig_w, orig_h = img.size
     
-    # Only upscale if image is too small for reliable OCR (<1600px height).
-    # Target 2400px height as a moderate, non-aggressive upscale.
+    # Only upscale if image is too small for reliable OCR (<1400px height).
+    # Target 1800px — enough for Surya to read small text; larger sizes hurt speed significantly.
     upscaled_img = img
     scale = 1.0
-    if orig_h < 1600:
-        scale = 2400 / orig_h
+    if orig_h < 1400:
+        scale = 1800 / orig_h
         new_w, new_h = int(orig_w * scale), int(orig_h * scale)
         print(f"[pipeline] upscaling small image from {orig_h}px to {new_h}px for legibility")
         upscaled_img = img.resize((new_w, new_h), Image.LANCZOS)

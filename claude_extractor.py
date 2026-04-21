@@ -11,6 +11,13 @@ import anthropic
 from dotenv import load_dotenv
 from PIL import Image
 
+try:
+    import cv2
+    import numpy as np
+    _CV2_AVAILABLE = True
+except ImportError:
+    _CV2_AVAILABLE = False
+
 from models import MenuData, MenuCategory, MenuItem
 
 load_dotenv()
@@ -533,6 +540,19 @@ def _dedup_text_elements(elements: list) -> list:
                 duplicate_idx = i
                 break
 
+            # Case 3: Same column, partial text (subset/superset), vertically close.
+            # Catches "the Table" (OCR) vs "For the Table" (decorative) at different y.
+            cy = bd.get("y", 0) + bd.get("h", 0) / 2
+            ex_cy = ex_bd.get("y", 0) + ex_bd.get("h", 0) / 2
+            if col == ex_col and abs(cy - ex_cy) < 250:
+                if words and ex_words and (words.issubset(ex_words) or ex_words.issubset(words)):
+                    if len(words) >= len(ex_words):
+                        # Current has more words — it's the complete version, replace
+                        deduped[i] = el
+                    # else: existing has more words — keep it, discard current
+                    duplicate_idx = i
+                    break
+
         if duplicate_idx is None:
             deduped.append(el)
 
@@ -626,35 +646,104 @@ def _enforce_single_logo(elements: list) -> list:
     return result
 
 
+def _preprocess_for_ocr(img: Image.Image) -> Image.Image:
+    """
+    Adaptive preprocessing for Surya OCR only. Claude always receives the original.
+    - Dark/photo backgrounds (e.g. valentines menu): adaptive threshold → clean B&W text
+    - Watermark/illustration backgrounds (e.g. kids menu): CLAHE contrast boost
+    - Clean white backgrounds: returned unchanged
+    """
+    if not _CV2_AVAILABLE:
+        return img
+
+    arr = np.array(img.convert("RGB"))
+    gray = cv2.cvtColor(arr, cv2.COLOR_RGB2GRAY)
+    h, w = gray.shape
+
+    # Sample corners to determine background type
+    margin = max(30, min(60, h // 10, w // 10))
+    corners = np.concatenate([
+        gray[:margin, :margin].flatten(),
+        gray[:margin, -margin:].flatten(),
+        gray[-margin:, :margin].flatten(),
+        gray[-margin:, -margin:].flatten(),
+    ])
+    bg_brightness = float(np.median(corners))
+
+    if bg_brightness < 160:
+        # Dark background — adaptive threshold produces clean black-on-white for Surya
+        binary = cv2.adaptiveThreshold(
+            gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+            cv2.THRESH_BINARY, 31, 15
+        )
+        rgb = cv2.cvtColor(binary, cv2.COLOR_GRAY2RGB)
+        print(f"[preprocess] dark bg ({bg_brightness:.0f}) → adaptive threshold")
+        return Image.fromarray(rgb)
+    elif bg_brightness < 235:
+        # Mid-brightness (watermarks, illustrations, tinted) — CLAHE contrast boost
+        clahe = cv2.createCLAHE(clipLimit=2.5, tileGridSize=(16, 16))
+        enhanced = clahe.apply(gray)
+        rgb = cv2.cvtColor(enhanced, cv2.COLOR_GRAY2RGB)
+        print(f"[preprocess] mid-brightness bg ({bg_brightness:.0f}) → CLAHE")
+        return Image.fromarray(rgb)
+    else:
+        return img  # clean white — no preprocessing needed
+
+
 _HYBRID_SYSTEM_PROMPT = """\
-You are a precise restaurant menu layout analyst. Your goal is to achieve 95%+ accuracy.
+You are a High-Precision Restaurant Menu Layout Extractor. Follow this EXACT process order.
 
-You will receive TWO images of the same menu page at identical pixel dimensions:
-- IMAGE 1: Clean original (no annotations) — use this to READ text and locate decorative elements/logo
-- IMAGE 2: Same image with numbered Set-of-Marks bounding boxes — use this to identify OCR block positions
+You receive TWO images of the same menu at identical pixel dimensions:
+- IMAGE 1: Clean original — use to READ text accurately and measure positions
+- IMAGE 2: Same image with numbered Set-of-Marks boxes — use ONLY to match OCR block IDs
 
-The OCR block list below provides exact pixel bounding boxes in the image coordinate space.
-Use these as spatial anchors when estimating decorative element positions.
+═══ PROCESS ORDER (follow sequentially) ═══
 
-Your job:
-1. Label every OCR block by its ID (subtype, column, font_family, corrected_text if OCR misread).
-2. CRITICAL — using IMAGE 1 (clean), identify ALL text OCR missed:
-   - Cursive/script/handwritten section headers (label as category_header).
-   - Small tags: 'GF', 'V', 'DF', meal-period letters (B/L/D).
-   - Footer text, legal disclaimers.
-   For each missed element: measure its bbox in IMAGE 1 pixel coordinates by visually
-   locating where it sits relative to nearby OCR blocks whose pixel coords you know.
-3. logo_bbox: find the logo/emblem using IMAGE 1 — encompass the full graphic (emblem + frame).
-4. background_color: dominant background as #rrggbb.
+STEP 1 — SKELETON SCAN (do before anything else):
+Visually scan IMAGE 1 for ALL section/category headers in ANY font style —
+cursive, script, handwritten, bold serif, or decorative. Examples to look for:
+"Course One/Two/Three", "Breakfast", "Lunch", "Starters", "Broths & Greens",
+"Main Dishes", "For the Table", "Wines by the glass", "Enjoy more", "Salads",
+"Add On", "Sides", "Experience It", "Appetizer", "Entree", "Dessert", "Kids Menu", etc.
+Every section header MUST appear in your output — these are the structural skeleton.
+Missing any header is the most critical accuracy failure possible.
 
-BBOX RULES (critical for accuracy):
-- ALL bboxes must be in IMAGE 1's pixel coordinate space (same dimensions as both images).
-- Anchor decorative element bboxes to nearby OCR block y-coordinates. Example: if a cursive
-  header sits just above OCR block [5] at y=340, the header's y2 should be ≈335.
-- Do NOT invent decorative elements. Only include text visible in IMAGE 1 that has NO
-  corresponding numbered OCR block in IMAGE 2.
-- font_family: "decorative-script" for cursive/calligraphy, "serif", "sans-serif", "display".
-- column: 0 for left/single column, 1 for right column.
+NUMBERED COURSE HEADERS (most commonly missed): "Course One", "Course Two", "Course Three"
+appear in italic/script font ABOVE their respective course items in the left column.
+"Course One" appears IMMEDIATELY below the logo area — scan specifically for it in
+the gap between the logo and the first food item. Do NOT skip it even if it looks close
+to the logo.
+
+COMPOUND HEADINGS: When cursive "the" (or "a", "la", "le") appears directly before a
+block-text section title (e.g., "the LE PREMIER", "the Château"), treat the FULL compound
+as ONE section header. Do NOT create a separate element for the small cursive word alone —
+this causes rendering overlap. Output "the LE PREMIER" as a single element.
+
+STEP 2 — LABEL OCR BLOCKS:
+For each numbered block in the list: assign subtype, column (0=left, 1=right),
+font_family, and corrected_text if OCR garbled the text (especially common near
+decorative overlays — e.g. "LE PRÉMIÑER" must be corrected to "LE PREMIER").
+
+STEP 3 — DECORATIVE ELEMENTS:
+For each section header from Step 1 that has NO corresponding numbered OCR block:
+  a) Find the OCR block immediately BELOW it in the same column from the provided list.
+  b) Set bbox bottom edge (y + h) = that block's y − 4px. Estimate height visually.
+  c) Measure x and width directly from IMAGE 1.
+  If no OCR block is below it in its column: estimate from IMAGE 1 visual position.
+Include ALL headers from Step 1 — completeness here is the #1 accuracy driver.
+
+STEP 4 — LOGO BBOX:
+Draw ONE unified bbox covering the COMPLETE restaurant branding block:
+  - All name lines (including small "the", large name, location line)
+  - Decorative ornament lines (e.g. "——— SARASOTA ———")
+  - Any graphic element (emblem, crest, swash, circular frame behind text)
+  Add generous ~10px padding on all sides. Never split into parts.
+
+BBOX RULES:
+- ALL coordinates in IMAGE 1 pixel space
+- Anchor decorative element bboxes to nearby OCR block y-coordinates for precision
+- font_family: "decorative-script" for cursive/calligraphy, "serif", "sans-serif", "display"
+- column: 0=left or single column, 1=right column
 """
 
 _HYBRID_TOOL_SCHEMA = {
@@ -791,6 +880,16 @@ def _load_surya_models() -> bool:
     global _surya_det_predictor, _surya_rec_predictor, _surya_foundation_predictor, _surya_api_version
     if _surya_api_version is not None:
         return True
+
+    # Skip all HuggingFace network HEAD requests — models are already cached locally.
+    # Without this, every startup wastes ~90s on 5-retry DNS failures per model file.
+    os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
+    os.environ.setdefault("HF_HUB_OFFLINE", "1")
+    os.environ.setdefault("HF_DATASETS_OFFLINE", "1")
+    # Batch recognition lines together for faster MPS throughput (default is often 1)
+    os.environ.setdefault("RECOGNITION_BATCH_SIZE", "32")
+    os.environ.setdefault("DETECTOR_BATCH_SIZE", "1")
+
     try:
         # Enable MPS (Apple Silicon GPU) if available
         try:
@@ -935,13 +1034,16 @@ def extract_layout_surya_som(img: Image.Image) -> dict | None:
     if client is None:
         return None
 
-    surya_blocks = extract_blocks_surya(img)
+    # Preprocess for Surya OCR only (dark/watermark backgrounds).
+    # Claude always receives the clean original for accurate visual reading.
+    surya_img = _preprocess_for_ocr(img)
+    surya_blocks = extract_blocks_surya(surya_img)
     if len(surya_blocks) < 3:
         print("[surya_som] too few blocks — skipping")
         return None
 
-    # Apply Set-of-Marks (SoM) annotations to the image before sending to Claude.
-    # This ensures Claude sees numbered boxes corresponding to the OCR block list.
+    # Apply Set-of-Marks (SoM) annotations to the ORIGINAL image before sending to Claude.
+    # Annotations on clean original — not on preprocessed — so Claude sees actual visual.
     annotated_img = _draw_som_annotations(img, surya_blocks)
     
     orig_w, orig_h = img.size
@@ -986,20 +1088,52 @@ def extract_layout_surya_som(img: Image.Image) -> dict | None:
     sw, sh = send_img.size
     user_msg = (
         f"Both images are {sw}×{sh}px. All bbox values must be in this pixel space.\n\n"
-        f"OCR blocks (Surya pixel-accurate positions, {len(surya_blocks)} total):\n"
+        "Follow the 4-step process from the system prompt exactly.\n\n"
+        "═══ STEP 1 — SKELETON SCAN ═══\n"
+        "Scan IMAGE 1 now. Identify every section/category header — cursive, script, bold, any font.\n"
+        "CRITICAL: Look for 'Course One' in the space BETWEEN the logo and the first food item "
+        "(left column) — it is there in italic/script and is the #1 most missed element.\n"
+        "COMPOUND HEADINGS: If cursive 'the' precedes a block-text title (e.g., 'the LE PREMIER'), "
+        "treat as ONE header — do NOT split into separate elements.\n"
+        "Do not proceed to Step 2 until you have catalogued ALL headers mentally.\n\n"
+        "═══ STEP 2 — OCR BLOCKS ═══\n"
+        f"Surya OCR extracted {len(surya_blocks)} blocks (pixel-accurate positions):\n"
         f"{block_list}\n\n"
-        "TASK 1 — Label OCR blocks: for each block ID assign subtype, column (0=left, 1=right), "
-        "font_family, and corrected_text if OCR misread the text.\n\n"
-        "TASK 2 — Decorative elements (visible text OCR missed, e.g. cursive/script section headers):\n"
-        "  Examine IMAGE 1 (clean). For each element not covered by a numbered block:\n"
-        "  a) Find the OCR block immediately BELOW it in the same column from the list above.\n"
-        "  b) Set y2 = that block's y minus 4. Set y1 = y2 minus the element's pixel height.\n"
-        "  c) Measure x1/x2 from IMAGE 1 directly.\n"
-        "  Example: script 'Course One' sits above block [7] at y=310 → bbox.y=310-h-4.\n"
-        "  Only if no OCR block is directly below it in the column, estimate position from IMAGE 1.\n\n"
-        "TASK 3 — logo_bbox: In IMAGE 1, encompass the ENTIRE restaurant branding block as one bbox. "
-        "Include every line of the logo text AND decorative graphics (e.g. 'the' script, 'CHÂTeau', "
-        "'SARASOTA', decorative swash lines — all are ONE logo). Do not split into parts.\n"
+        "Label each: subtype, column (0=left, 1=right), font_family, corrected_text if needed.\n"
+        "CRITICAL: Use corrected_text to fix OCR garbling near overlapping decorative elements "
+        "(e.g. 'LE PRÉMIÑER' → 'LE PREMIER', 'CHATeau' → 'CHÂTEAU').\n\n"
+        "═══ STEP 3 — DECORATIVE ELEMENTS ═══\n"
+        "3a) SECTION HEADERS: For every cursive/script header from Step 1 with no numbered OCR block:\n"
+        "  - Find the OCR block immediately BELOW it in the same column.\n"
+        "  - Set bbox bottom (y + h) = that block's y − 4px. Estimate height visually.\n"
+        "  - Measure x and width from IMAGE 1 directly.\n"
+        "  - If no block below in same column: estimate from IMAGE 1 visual position.\n"
+        "  COMPOUND CHECK: If a short cursive word ('the', 'le', 'la') appears in the OCR block\n"
+        "  list adjacent to a section title, do NOT add it as a separate decorative element.\n"
+        "  Instead, if the full compound isn't already in the OCR list, add ONE decorative\n"
+        "  element with the full text (e.g., 'the LE PREMIER') covering both words.\n\n"
+        "3b) PRICE TABLES — ZERO TOLERANCE for missing prices.\n"
+        "  Scan IMAGE 1 systematically for ALL price/add-on tables. For 'Add On', 'Sides',\n"
+        "  or any multi-column price grid:\n"
+        "  1. List every ROW you see in IMAGE 1 (item name + price)\n"
+        "  2. Cross-check IMAGE 2 — does EACH price number have an OCR box?\n"
+        "  3. For EVERY missing price (especially single digits: 3, 4, 5, 7, 8):\n"
+        "     - Add as decorative_element with subtype='item_price'\n"
+        "     - Bbox: place it immediately to the RIGHT of the item name block\n"
+        "     - Width ~30px, height matching item name height\n"
+        "  4. For EVERY missing item name (left of a price number with no name box):\n"
+        "     - Add as decorative_element with subtype='item_name'\n"
+        "  EXAMPLE: 'coffee/tea  3' — if '3' has no box in IMAGE 2, add {content:'3', subtype:'item_price', bbox:...}\n"
+        "  Do this for EVERY row in EVERY price table. Missing even one price is failure.\n\n"
+        "═══ STEP 4 — LOGO BBOX ═══\n"
+        "In IMAGE 1, draw ONE bbox tightly around the restaurant branding ONLY. Include:\n"
+        "  - Small 'the' text above the main name (if present)\n"
+        "  - Large restaurant name (e.g. 'CHÂTeau', 'CHATEAU')\n"
+        "  - Location line (e.g. '— ANNA MARIA —', '— SARASOTA —')\n"
+        "  - Decorative swash/flourish directly part of the logo graphic\n"
+        "Do NOT include: background illustrations (pumpkins, watermarks, photo art),\n"
+        "  section headers ('Kids Menu', 'Dinner Menu'), or body text.\n"
+        "Add 8px padding on all sides. ONE unified bbox — never split.\n"
     )
 
     try:
@@ -1109,12 +1243,18 @@ def extract_layout_surya_som(img: Image.Image) -> dict | None:
     # --- Post-processing (The 'Precision Engine' cleanup) ---
     # 1. Deduplicate text (Word-match merge Surya vs Claude's hallucinated decorative copies)
     elements = _dedup_text_elements(elements)
-    
+
     # 2. Snap decorative headers to content below and center in column
     elements = _snap_decorative_headers(elements, orig_w=orig_w)
-    
+
     # 3. Mask any text/separators inside the logo area
     elements = _mask_logo_elements(elements)
+
+    # 4. Verification pass — second Claude call with overlay image to catch missed headers
+    elements = _verification_pass(img, elements, orig_w, orig_h)
+
+    # 5. Re-snap after any newly added elements from verification pass
+    elements = _snap_decorative_headers(elements, orig_w=orig_w)
 
     return {
         "elements": elements,
@@ -1211,6 +1351,12 @@ def _mask_logo_elements(elements: list) -> list:
             result.append(el)
             continue
 
+        # Never mask structural section headers — they are never logo fragments,
+        # even if they happen to appear within the logo clearance zone.
+        if el.get("subtype") == "category_header":
+            result.append(el)
+            continue
+
         cx = bd.get("x", 0) + bd.get("w", 0) / 2
         cy = bd.get("y", 0) + bd.get("h", 0) / 2
 
@@ -1224,9 +1370,10 @@ def _mask_logo_elements(elements: list) -> list:
             lx = lbd.get("x", 0)
             ly = lbd.get("y", 0)
             # Expand logo clearance zone: catch misplaced logo text/fragments.
-            # Use larger clearance for branding areas.
-            clear_y = min(lh * 0.7, 100.0) # increased from 70
-            clear_x = min(lw * 0.4, 80.0)  # increased from 50
+            # Downward clearance is SMALL (50px max) — prevents masking section headers
+            # like "Course One" that legitimately sit just below the logo.
+            clear_y = min(lh * 0.25, 50.0)
+            clear_x = min(lw * 0.4, 80.0)
             lx1 = lx - clear_x
             ly1 = ly - 30
             lx2 = lx + lw + clear_x
@@ -1238,6 +1385,251 @@ def _mask_logo_elements(elements: list) -> list:
         if not inside_logo:
             result.append(el)
     return result
+
+
+def _refine_logo_bbox_by_pixels(
+    img: Image.Image,
+    rough_bbox: dict,
+    canvas_w: int,
+    canvas_h: int,
+) -> "dict | None":
+    """
+    Refine Claude's rough logo bbox to the true pixel extent of the logo graphic.
+
+    Expands a search zone around the rough bbox, thresholds ink pixels (auto-detects
+    dark-on-light vs light-on-dark), applies morphological closing to bridge intra-logo
+    gaps (letter spacing, thin ornaments), then returns the bounding rect of all ink pixels
+    mapped back to original coordinates.
+
+    Returns a refined {x, y, w, h} dict, or None if cv2 is unavailable or result is too small.
+    """
+    if not _CV2_AVAILABLE:
+        return None
+
+    rx = float(rough_bbox.get("x", 0))
+    ry = float(rough_bbox.get("y", 0))
+    rw = float(rough_bbox.get("w", 0))
+    rh = float(rough_bbox.get("h", 0))
+
+    if rw < 10 or rh < 10:
+        return None
+
+    # Search zone: expand conservatively on x (logo width usually correct),
+    # generously on y (to capture ornaments/swash below the text).
+    # Small x-expansion prevents including adjacent elements like "Brunch" cursive.
+    pad_x = rw * 0.15
+    pad_y = rh * 0.6
+    sx1 = max(0, int(rx - pad_x))
+    sy1 = max(0, int(ry - pad_y))
+    sx2 = min(canvas_w, int(rx + rw + pad_x))
+    sy2 = min(canvas_h, min(int(ry + rh + pad_y), int(canvas_h * 0.40)))
+
+    if sx2 <= sx1 + 10 or sy2 <= sy1 + 10:
+        return None
+
+    zone = img.crop((sx1, sy1, sx2, sy2))
+    arr = np.array(zone.convert("RGB"))
+    gray = cv2.cvtColor(arr, cv2.COLOR_RGB2GRAY)
+    zh, zw = gray.shape
+
+    # Detect background brightness from zone corners
+    margin = max(5, min(20, zh // 8, zw // 8))
+    corners = np.concatenate([
+        gray[:margin, :margin].flatten(),
+        gray[:margin, -margin:].flatten(),
+        gray[-margin:, :margin].flatten(),
+        gray[-margin:, -margin:].flatten(),
+    ])
+    bg_brightness = float(np.median(corners))
+
+    # Threshold: separate ink from background
+    if bg_brightness > 180:
+        _, binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+    else:
+        _, binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+
+    # Morphological closing: bridges gaps within the logo (letter spacing, thin ornaments)
+    ksize = max(7, min(zh // 15, zw // 15))
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (ksize, ksize))
+    closed = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel)
+
+    coords = cv2.findNonZero(closed)
+    if coords is None:
+        return None
+
+    ix, iy, iw, ih = cv2.boundingRect(coords)
+
+    # Sanity: result must be at least 40% of rough bbox size in each dimension
+    if iw < rw * 0.4 or ih < rh * 0.4:
+        return None
+
+    pad = 8
+    abs_x = max(0, sx1 + ix - pad)
+    abs_y = max(0, sy1 + iy - pad)
+    abs_w = min(canvas_w - abs_x, iw + pad * 2)
+    abs_h = min(canvas_h - abs_y, ih + pad * 2)
+
+    print(f"[logo_pixel] ({abs_x:.0f},{abs_y:.0f}) {abs_w:.0f}×{abs_h:.0f}px  "
+          f"(rough was x={rx:.0f},y={ry:.0f} {rw:.0f}×{rh:.0f})")
+    return {"x": float(abs_x), "y": float(abs_y), "w": float(abs_w), "h": float(abs_h)}
+
+
+def _render_extraction_overlay(img: Image.Image, elements: list) -> Image.Image:
+    """
+    Draw extracted element bboxes as colored outlines on a copy of img for verification.
+    category_header → green, logo → red, other text → blue.
+    """
+    from PIL import ImageDraw
+    overlay = img.copy().convert("RGB")
+    draw = ImageDraw.Draw(overlay)
+    color_map = {
+        "logo": (220, 50, 50),
+        "category_header": (30, 180, 30),
+        "separator": (255, 140, 0),
+    }
+    for el in elements:
+        bd = el.get("bbox") or {}
+        x, y, w, h = bd.get("x", 0), bd.get("y", 0), bd.get("w", 0), bd.get("h", 0)
+        if w < 1 or h < 1:
+            continue
+        subtype = el.get("subtype", el.get("type", ""))
+        color = color_map.get(subtype) or color_map.get(el.get("type", "")) or (80, 80, 220)
+        draw.rectangle([x, y, x + w, y + h], outline=color, width=2)
+    return overlay
+
+
+def _verification_pass(
+    img: Image.Image,
+    elements: list,
+    canvas_w: int,
+    canvas_h: int,
+) -> list:
+    """
+    Second Claude call: send the clean image + an overlay of already-extracted elements.
+    Claude spots content visible in the image but NOT covered by any extraction box.
+    Missing elements are appended to the list and returned.
+
+    Focused on section/category headers — the most critical miss type.
+    """
+    client = _get_client()
+    if client is None:
+        return elements
+
+    # Build overlay image showing what we already extracted
+    overlay_img = _render_extraction_overlay(img, elements)
+
+    # Resize both to fit within 1400px
+    max_dim = 1400
+    scale = min(1.0, max_dim / max(img.width, img.height))
+    send_w = max(1, int(img.width * scale))
+    send_h = max(1, int(img.height * scale))
+    clean_resized = img.resize((send_w, send_h), Image.LANCZOS)
+    overlay_resized = overlay_img.resize((send_w, send_h), Image.LANCZOS)
+
+    def _enc(pil_img: Image.Image) -> str:
+        buf = io.BytesIO()
+        pil_img.convert("RGB").save(buf, format="JPEG", quality=88)
+        return base64.standard_b64encode(buf.getvalue()).decode()
+
+    clean_b64 = _enc(clean_resized)
+    overlay_b64 = _enc(overlay_resized)
+
+    # Summarise already-extracted text for reference
+    extracted_texts = sorted(
+        {el.get("content", "").strip() for el in elements if el.get("type") == "text" and el.get("content")},
+    )
+    text_list = "\n".join(f"  • {t}" for t in extracted_texts[:80]) or "  (none)"
+
+    verify_prompt = (
+        f"These two images are {send_w}×{send_h}px.\n"
+        "IMAGE 1 is the clean original menu.\n"
+        "IMAGE 2 is the same image with COLORED BOXES showing already-extracted elements "
+        "(green = section headers, blue = text, red = logo, orange = separators).\n\n"
+        "TASK: Compare IMAGE 1 vs IMAGE 2 carefully.\n"
+        "Find ANY section/category headers or important structural text that is VISIBLE in "
+        "IMAGE 1 but has NO green or blue box covering it in IMAGE 2.\n\n"
+        "Already extracted text (do NOT re-add these):\n"
+        f"{text_list}\n\n"
+        "Focus especially on:\n"
+        "1. Cursive/italic headers: 'Course One', 'Breakfast', 'Lunch', 'Starters', "
+        "'Broths & Greens', 'Main Dishes', 'Salads', 'For the Table', 'Wines by the glass', etc.\n"
+        "2. The FIRST item in each column (bold item name at the top of each section) — "
+        "these are commonly missed when they sit close to a cursive header.\n"
+        "3. Price numbers in ANY tabular section (Add On, Sides, drinks table). "
+        "For each ROW in a price table: the item name AND the price number must BOTH have boxes. "
+        "If a price number (e.g. 3, 4, 7, 8, 4.50) has NO box, it is missing.\n"
+        "4. Any text visible in IMAGE 1 that has no box at all in IMAGE 2.\n\n"
+        f"Return ONLY a JSON array (use image coords 0–{send_w} x, 0–{send_h} y):\n"
+        "[\n"
+        "  {\"content\": \"Course One\", \"subtype\": \"category_header\", "
+        "\"font_family\": \"decorative-script\", \"column\": 0, "
+        "\"bbox\": {\"x\": 80, \"y\": 230, \"w\": 180, \"h\": 45}}\n"
+        "]\n"
+        "Return [] if nothing is missing. Return ONLY the JSON array, no explanation."
+    )
+
+    try:
+        response = client.messages.create(
+            model="claude-sonnet-4-6",
+            max_tokens=2048,
+            messages=[{
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "IMAGE 1 — Clean original:"},
+                    {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": clean_b64}},
+                    {"type": "text", "text": "IMAGE 2 — Extraction overlay:"},
+                    {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": overlay_b64}},
+                    {"type": "text", "text": verify_prompt},
+                ],
+            }],
+        )
+
+        raw = (response.content[0].text or "").strip() if response.content else "[]"
+        # Extract JSON array
+        import re as _re
+        match = _re.search(r"\[.*\]", raw, _re.DOTALL)
+        if not match:
+            print("[verify_pass] no JSON array in response")
+            return elements
+
+        missing = json.loads(match.group())
+        if not missing:
+            print("[verify_pass] nothing missing — extraction complete")
+            return elements
+
+        print(f"[verify_pass] found {len(missing)} missing elements")
+        inv_scale = 1.0 / scale  # map back to original image coords
+
+        for dec in missing:
+            bd = dec.get("bbox") or {}
+            abs_bd = {
+                "x": float(bd.get("x", 0)) * inv_scale,
+                "y": float(bd.get("y", 0)) * inv_scale,
+                "w": float(bd.get("w", 100)) * inv_scale,
+                "h": float(bd.get("h", 30)) * inv_scale,
+            }
+            elem_h = max(1.0, abs_bd["h"])
+            elements.append({
+                "type": "text",
+                "subtype": dec.get("subtype", "category_header"),
+                "content": dec.get("content", ""),
+                "bbox": abs_bd,
+                "style": {
+                    "font_size": round(elem_h * 0.75, 1),
+                    "font_weight": "normal",
+                    "font_style": "italic",
+                    "font_family": dec.get("font_family", "decorative-script"),
+                    "color": "#1a1a1a",
+                    "text_align": dec.get("text_align", "center"),
+                },
+                "column": int(dec.get("column", 0)),
+            })
+
+        return elements
+
+    except Exception as exc:
+        print(f"[verify_pass] failed: {exc}")
+        return elements
 
 
 def _snap_decorative_headers(elements: list, orig_w: float = 1200) -> list:
@@ -1299,14 +1691,25 @@ def _snap_decorative_headers(elements: list, orig_w: float = 1200) -> list:
             new_y = max(0.0, first_y - gap - capped_h)
 
         # --- Horizontal Snapping ---
-        # Center headers in their column if they are centered or likely intended to be.
+        # Center headers within the ACTUAL x-span of their column's content blocks.
+        # Using equal column widths (orig_w / num_cols) is wrong for menus with
+        # an asymmetric layout (e.g., narrow left box + wide right section).
         new_x = el_bd.get("x", 0)
         if el.get("style", {}).get("text_align") == "center" or is_header:
-            # Dynamically determine column count from all text elements
-            max_col = max((e.get("column", 0) for e in elements if e.get("type") == "text"), default=0)
-            num_cols = max_col + 1
-            col_w = orig_w / num_cols
-            col_center = (el_col * col_w) + (col_w / 2)
+            col_blocks_for_span = [
+                b for b in content_blocks if b.get("column", 0) == el_col
+            ]
+            if col_blocks_for_span:
+                # True center based on actual OCR block positions in this column
+                col_x_min = min(b["bbox"]["x"] for b in col_blocks_for_span)
+                col_x_max = max(b["bbox"]["x"] + b["bbox"].get("w", 0) for b in col_blocks_for_span)
+                col_center = (col_x_min + col_x_max) / 2
+            else:
+                # Fallback: equal division when no content blocks found
+                max_col = max((e.get("column", 0) for e in elements if e.get("type") == "text"), default=0)
+                num_cols = max_col + 1
+                col_w = orig_w / num_cols
+                col_center = (el_col * col_w) + (col_w / 2)
             new_x = col_center - (el_bd.get("w", 100) / 2)
 
         if abs(new_y - el_bd.get("y", 0)) > 2 or abs(new_x - el_bd.get("x", 0)) > 2:
