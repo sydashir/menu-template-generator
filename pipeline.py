@@ -120,6 +120,21 @@ def process(file_path: str, output_dir: str, file_stem: str = None) -> list[dict
                 img_lines = detect_separators(side_img)
                 # Filter out Claude's separator elements — OpenCV gives exact coordinates
                 elements = [e for e in claude_layout.get("elements", []) if e.get("type") != "separator"]
+
+                # Crop-and-embed image elements (ornaments, badges, collage_boxes)
+                for el in elements:
+                    if el.get("type") == "image":
+                        bd = el.get("bbox") or {}
+                        ix1 = max(0, int(bd.get("x", 0)))
+                        iy1 = max(0, int(bd.get("y", 0)))
+                        ix2 = min(canvas_w, int(bd.get("x", 0) + bd.get("w", 0)))
+                        iy2 = min(canvas_h, int(bd.get("y", 0) + bd.get("h", 0)))
+                        if ix2 > ix1 and iy2 > iy1:
+                            crop = side_img.crop((ix1, iy1, ix2, iy2))
+                            buf = io.BytesIO()
+                            crop.convert("RGB").save(buf, format="PNG")
+                            el["image_data"] = base64.b64encode(buf.getvalue()).decode()
+                            print(f"[pipeline] image/{el.get('subtype')} cropped: {ix2-ix1}×{iy2-iy1}px")
                 # Convert OpenCV lines to standard separator elements and append
                 for ln in img_lines:
                     x1, y1 = min(ln.x1, ln.x2), min(ln.y1, ln.y2)
@@ -149,6 +164,30 @@ def process(file_path: str, output_dir: str, file_stem: str = None) -> list[dict
                             "bbox": {"x": float(x1), "y": float(y1), "w": float(lw), "h": float(lh)},
                             "style": {"color": "#000000", "stroke_width": stroke_w, "stroke_style": "solid"},
                         })
+                # Suppress border separators whose interior overlaps any logo or image element.
+                # These are usually decorative frames around graphical elements we already crop.
+                def _bd_overlap_frac(sep_bd: dict, img_bd: dict) -> float:
+                    """Fraction of sep_bd area that overlaps img_bd."""
+                    sx1 = sep_bd.get("x", 0); sy1 = sep_bd.get("y", 0)
+                    sx2 = sx1 + sep_bd.get("w", 0); sy2 = sy1 + sep_bd.get("h", 0)
+                    ix1 = img_bd.get("x", 0); iy1 = img_bd.get("y", 0)
+                    ix2 = ix1 + img_bd.get("w", 0); iy2 = iy1 + img_bd.get("h", 0)
+                    ox = max(0.0, min(sx2, ix2) - max(sx1, ix1))
+                    oy = max(0.0, min(sy2, iy2) - max(sy1, iy1))
+                    inter = ox * oy
+                    sep_area = max(1.0, sep_bd.get("w", 1) * sep_bd.get("h", 1))
+                    return inter / sep_area
+
+                graphic_bds = [e.get("bbox", {}) for e in elements
+                                if e.get("type") in ("logo", "image")]
+                elements = [
+                    el for el in elements
+                    if not (
+                        el.get("type") == "separator" and el.get("subtype") == "border"
+                        and any(_bd_overlap_frac(el.get("bbox", {}), gbd) > 0.35
+                                for gbd in graphic_bds)
+                    )
+                ]
                 claude_layout["elements"] = elements
 
                 num_cols = max(

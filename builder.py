@@ -227,6 +227,16 @@ def build_template_from_claude(
                 )
                 elements.append(logo.model_dump())
 
+            elif el_type == "image":
+                # Graphic element (ornament swash, brand badge, collage box) — crop already embedded
+                elements.append({
+                    "type": "image",
+                    "subtype": raw_el.get("subtype", "ornament"),
+                    "id": _make_id("img", round(bbox.x), round(bbox.y)),
+                    "bbox": bbox.model_dump(),
+                    "image_data": raw_el.get("image_data"),
+                })
+
         except Exception as e:
             print(f"[builder] skipped element type={raw_el.get('type')!r} subtype={raw_el.get('subtype')!r}: {e}")
             continue

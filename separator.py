@@ -124,6 +124,12 @@ def _merge_into_boxes(
             if box_w < w * 0.05 or box_w > w * 0.92:
                 continue  # too narrow or full-page-width (not a section box)
 
+            # Minimum box height: ornament swashes form tiny false boxes (~20-60px).
+            # Real structural borders (section frames, "As seen on" box) are >=80px tall.
+            box_h_approx = max(vl_y2 - vl_y1, vr_y2 - vr_y1)
+            if box_h_approx < 80:
+                continue
+
             # Both verticals must span similar y-range
             y_overlap = max(0.0, min(vl_y2, vr_y2) - max(vl_y1, vr_y1))
             min_span = min(vl_y2 - vl_y1, vr_y2 - vr_y1)

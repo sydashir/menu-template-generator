@@ -636,12 +636,12 @@ def _enforce_single_logo(elements: list) -> list:
                 result.append(merged_logo)
                 logo_inserted = True
         else:
-            # Distant logo — reclassify as ornament (truly separate graphical element)
+            # Distant logo — reclassify as image/badge (separate graphical element to crop)
             bd = el.get("bbox") or {}
             result.append({
-                "type": "separator", "subtype": "ornament",
-                "orientation": "horizontal", "bbox": bd,
-                "style": {"color": "#000000", "stroke_width": 1.5, "stroke_style": "solid"},
+                "type": "image",
+                "subtype": "badge",
+                "bbox": bd,
             })
     return result
 
@@ -738,6 +738,25 @@ Draw ONE unified bbox covering the COMPLETE restaurant branding block:
   - Decorative ornament lines (e.g. "——— SARASOTA ———")
   - Any graphic element (emblem, crest, swash, circular frame behind text)
   Add generous ~10px padding on all sides. Never split into parts.
+  The MAIN logo is the primary restaurant branding — usually at the top of the menu.
+  Secondary logos (footer variants, location badges) go in graphic_elements, NOT here.
+
+STEP 5 — GRAPHIC ELEMENTS (non-text graphical regions):
+Scan IMAGE 1 for graphical elements that CANNOT be captured as text. These will be
+cropped directly from the image — do NOT try to read text from them. Give their bbox.
+Three types to identify:
+  a) ornament — small decorative swash/flourish/curl graphic that appears DIRECTLY BELOW
+     a section header (below "Sharable", "Starters", "Entrées", "Sides", etc.).
+     These are typically 30–80px tall, full-column wide, and look like a symmetrical
+     floral or calligraphic embellishment. Report EACH one separately.
+  b) badge — circular or rectangular brand logo icon (Food Network circle, OpenTable
+     circle, YouTube button, Hulu logo, TripAdvisor owl, Yelp logo, etc.). Each badge
+     that is a graphical image (not plain text) gets its own entry.
+  c) collage_box — a bordered box containing multiple brand logos or mixed graphic+text
+     content, e.g. an "As seen on:" panel with Food Network + YouTube + Hulu logos inside.
+     Report the ENTIRE box as one collage_box (the crops will capture everything inside).
+  IMPORTANT: Do NOT include the main restaurant logo here — that goes in logo_bbox.
+  Do NOT include plain text footer info (addresses, websites) — those are OCR blocks.
 
 BBOX RULES:
 - ALL coordinates in IMAGE 1 pixel space
@@ -853,6 +872,33 @@ _HYBRID_TOOL_SCHEMA = {
                 },
                 "required": ["restaurant_name", "tagline", "address", "phone",
                              "num_columns", "categories"],
+            },
+            "graphic_elements": {
+                "type": "array",
+                "description": (
+                    "Non-text graphical regions to crop and embed as images. "
+                    "Do NOT include the main restaurant logo (use logo_bbox for that). "
+                    "Types: ornament (swash below section header), badge (brand circle/icon), "
+                    "collage_box (bordered multi-logo panel like 'As seen on' box)."
+                ),
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "subtype": {
+                            "type": "string",
+                            "enum": ["ornament", "badge", "collage_box"],
+                        },
+                        "bbox": {
+                            "type": "object",
+                            "properties": {
+                                "x": {"type": "number"}, "y": {"type": "number"},
+                                "w": {"type": "number"}, "h": {"type": "number"},
+                            },
+                            "required": ["x", "y", "w", "h"],
+                        },
+                    },
+                    "required": ["subtype", "bbox"],
+                },
             },
         },
         "required": ["background_color", "ocr_labels", "decorative_elements", "menu_data"],
@@ -1126,14 +1172,29 @@ def extract_layout_surya_som(img: Image.Image) -> dict | None:
         "  EXAMPLE: 'coffee/tea  3' — if '3' has no box in IMAGE 2, add {content:'3', subtype:'item_price', bbox:...}\n"
         "  Do this for EVERY row in EVERY price table. Missing even one price is failure.\n\n"
         "═══ STEP 4 — LOGO BBOX ═══\n"
-        "In IMAGE 1, draw ONE bbox tightly around the restaurant branding ONLY. Include:\n"
+        "In IMAGE 1, draw ONE bbox tightly around the PRIMARY restaurant branding ONLY. Include:\n"
         "  - Small 'the' text above the main name (if present)\n"
         "  - Large restaurant name (e.g. 'CHÂTeau', 'CHATEAU')\n"
         "  - Location line (e.g. '— ANNA MARIA —', '— SARASOTA —')\n"
         "  - Decorative swash/flourish directly part of the logo graphic\n"
         "Do NOT include: background illustrations (pumpkins, watermarks, photo art),\n"
-        "  section headers ('Kids Menu', 'Dinner Menu'), or body text.\n"
-        "Add 8px padding on all sides. ONE unified bbox — never split.\n"
+        "  section headers ('Kids Menu', 'Dinner Menu'), body text.\n"
+        "  Secondary/footer logo variants (repeated logos in the bottom section) go in\n"
+        "  graphic_elements as 'badge' — NOT here.\n"
+        "Add 8px padding on all sides. ONE unified bbox — never split.\n\n"
+        "═══ STEP 5 — GRAPHIC ELEMENTS ═══\n"
+        "Scan IMAGE 1 for non-text graphical regions. Report bbox for each:\n"
+        "  a) ornament — EACH section header (Sharable, Starters, Entrées, Broths & Greens,\n"
+        "     Sides, etc.) has a small decorative swash/flourish DIRECTLY BELOW the cursive\n"
+        "     text. These look like symmetrical floral or calligraphic curls (~30-80px tall).\n"
+        "     Report one per section header — this is a mandatory element. Do not skip.\n"
+        "  b) badge — Each brand circle/icon: Food Network, OpenTable, YouTube, Hulu,\n"
+        "     TripAdvisor, Yelp, etc. that appears as a graphical image (not plain text).\n"
+        "     Report each one separately with its own bbox.\n"
+        "  c) collage_box — Any bordered panel containing multiple logos (e.g., 'As seen on:'\n"
+        "     box with Food Network + YouTube + Hulu icons inside). Report the ENTIRE box as\n"
+        "     one element — the crop will capture all logos inside.\n"
+        "  NOTE: Omit the main restaurant logo (already in logo_bbox) and plain text.\n"
     )
 
     try:
@@ -1237,8 +1298,27 @@ def extract_layout_surya_som(img: Image.Image) -> dict | None:
         _px = "left" if _lb_cx < orig_w * 0.35 else ("right" if _lb_cx > orig_w * 0.65 else "center")
         elements.append({"type": "logo", "bbox": lb, "position_hint": f"{_py}_{_px}"})
 
+    # Graphic elements (ornaments, badges, collage boxes) — crop-and-embed in pipeline
+    for ge in data.get("graphic_elements", []):
+        bd = ge.get("bbox") or {}
+        if scale_x != 1.0 or scale_y != 1.0:
+            bd = {
+                "x": bd.get("x", 0) * scale_x, "y": bd.get("y", 0) * scale_y,
+                "w": bd.get("w", 0) * scale_x,  "h": bd.get("h", 0) * scale_y,
+            }
+        if bd.get("w", 0) > 5 and bd.get("h", 0) > 5:
+            elements.append({
+                "type": "image",
+                "subtype": ge.get("subtype", "ornament"),
+                "bbox": {
+                    "x": float(bd.get("x", 0)), "y": float(bd.get("y", 0)),
+                    "w": max(1.0, float(bd.get("w", 0))), "h": max(1.0, float(bd.get("h", 0))),
+                },
+            })
+
     print(f"[surya_som] built {len(elements)} elements "
-          f"(ocr={len(surya_blocks)}, decorative={len(data.get('decorative_elements', []))})")
+          f"(ocr={len(surya_blocks)}, decorative={len(data.get('decorative_elements', []))}, "
+          f"graphics={len(data.get('graphic_elements', []))})")
     
     # --- Post-processing (The 'Precision Engine' cleanup) ---
     # 1. Deduplicate text (Word-match merge Surya vs Claude's hallucinated decorative copies)
@@ -1351,9 +1431,8 @@ def _mask_logo_elements(elements: list) -> list:
             result.append(el)
             continue
 
-        # Never mask structural section headers — they are never logo fragments,
-        # even if they happen to appear within the logo clearance zone.
-        if el.get("subtype") == "category_header":
+        # Never mask structural section headers or graphic elements — they are not logo fragments.
+        if el.get("subtype") == "category_header" or el.get("type") == "image":
             result.append(el)
             continue
 
