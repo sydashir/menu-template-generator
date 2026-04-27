@@ -29,6 +29,7 @@ from claude_extractor import (
     _mask_logo_elements,
     _refine_logo_bbox_by_pixels,
 )
+from s3_asset_library import resolve_asset
 
 SUPPORTED_PDF = {".pdf"}
 SUPPORTED_IMG = {".jpg", ".jpeg", ".png", ".webp"}
@@ -122,6 +123,7 @@ def process(file_path: str, output_dir: str, file_stem: str = None) -> list[dict
                 elements = [e for e in claude_layout.get("elements", []) if e.get("type") != "separator"]
 
                 # Crop-and-embed image elements (ornaments, badges, collage_boxes)
+                # Priority: S3 asset library (clean PNG) → pixel crop from source image
                 for el in elements:
                     if el.get("type") == "image":
                         bd = el.get("bbox") or {}
@@ -129,12 +131,25 @@ def process(file_path: str, output_dir: str, file_stem: str = None) -> list[dict
                         iy1 = max(0, int(bd.get("y", 0)))
                         ix2 = min(canvas_w, int(bd.get("x", 0) + bd.get("w", 0)))
                         iy2 = min(canvas_h, int(bd.get("y", 0) + bd.get("h", 0)))
-                        if ix2 > ix1 and iy2 > iy1:
+                        if ix2 <= ix1 or iy2 <= iy1:
+                            continue
+
+                        # 1. Try S3 asset library first
+                        s3_label = el.get("semantic_label")
+                        s3_bytes = resolve_asset(s3_label) if s3_label else None
+                        if s3_bytes:
+                            el["image_data"] = base64.b64encode(s3_bytes).decode()
+                            print(f"[pipeline] S3 asset resolved: {s3_label} ({el.get('subtype')})")
+                        else:
+                            # 2. Fall back: pixel crop from source image
                             crop = side_img.crop((ix1, iy1, ix2, iy2))
                             buf = io.BytesIO()
                             crop.convert("RGB").save(buf, format="PNG")
                             el["image_data"] = base64.b64encode(buf.getvalue()).decode()
-                            print(f"[pipeline] image/{el.get('subtype')} cropped: {ix2-ix1}×{iy2-iy1}px")
+                            if s3_label:
+                                print(f"[pipeline] S3 miss for {s3_label!r} — using pixel crop: {ix2-ix1}×{iy2-iy1}px")
+                            else:
+                                print(f"[pipeline] image/{el.get('subtype')} pixel crop: {ix2-ix1}×{iy2-iy1}px")
                 # Convert OpenCV lines to standard separator elements and append
                 for ln in img_lines:
                     x1, y1 = min(ln.x1, ln.x2), min(ln.y1, ln.y2)

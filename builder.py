@@ -235,6 +235,7 @@ def build_template_from_claude(
                     "id": _make_id("img", round(bbox.x), round(bbox.y)),
                     "bbox": bbox.model_dump(),
                     "image_data": raw_el.get("image_data"),
+                    "semantic_label": raw_el.get("semantic_label"),  # forwarded for traceability
                 })
 
         except Exception as e:

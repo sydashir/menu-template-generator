@@ -315,7 +315,7 @@ def extract_full_layout_via_claude(img: Image.Image) -> dict | None:
 
     try:
         response = client.messages.create(
-            model="claude-sonnet-4-6",
+            model="claude-3-5-sonnet-latest",
             max_tokens=16384,  # 32768 triggers Anthropic SDK streaming requirement error
             messages=[{
                 "role": "user",
@@ -391,7 +391,7 @@ def extract_full_layout_via_tool_use(img: Image.Image) -> dict | None:
 
     try:
         response = client.messages.create(
-            model="claude-sonnet-4-6",
+            model="claude-3-5-sonnet-latest",
             max_tokens=16384,  # 32768 triggers Anthropic SDK streaming requirement error
             system=_TOOL_SYSTEM_PROMPT,
             tools=[_TOOL_SCHEMA],
@@ -888,6 +888,21 @@ _HYBRID_TOOL_SCHEMA = {
                             "type": "string",
                             "enum": ["ornament", "badge", "collage_box"],
                         },
+                        "semantic_label": {
+                            "type": ["string", "null"],
+                            "description": (
+                                "Canonical slug identifying the asset for S3 library lookup. "
+                                "Use EXACTLY one of these slugs when you recognise the element, "
+                                "otherwise set null:\n"
+                                "Badges: badge/food_network | badge/opentable_diners_choice | "
+                                "badge/youtube | badge/hulu | badge/tripadvisor | badge/yelp | "
+                                "badge/michelin | badge/zagat | badge/best_of\n"
+                                "Ornaments: ornament/floral_swash_centered | ornament/floral_swash_left | "
+                                "ornament/calligraphic_rule | ornament/diamond_rule | "
+                                "ornament/vine_separator | ornament/scroll_divider\n"
+                                "Separators: separator/wavy_line | separator/double_line | separator/dotted_ornament"
+                            ),
+                        },
                         "bbox": {
                             "type": "object",
                             "properties": {
@@ -1183,23 +1198,34 @@ def extract_layout_surya_som(img: Image.Image) -> dict | None:
         "  graphic_elements as 'badge' — NOT here.\n"
         "Add 8px padding on all sides. ONE unified bbox — never split.\n\n"
         "═══ STEP 5 — GRAPHIC ELEMENTS ═══\n"
-        "Scan IMAGE 1 for non-text graphical regions. Report bbox for each:\n"
+        "Scan IMAGE 1 for non-text graphical regions. Report bbox + semantic_label for each:\n"
         "  a) ornament — EACH section header (Sharable, Starters, Entrées, Broths & Greens,\n"
         "     Sides, etc.) has a small decorative swash/flourish DIRECTLY BELOW the cursive\n"
         "     text. These look like symmetrical floral or calligraphic curls (~30-80px tall).\n"
         "     Report one per section header — this is a mandatory element. Do not skip.\n"
+        "     semantic_label for swashes: ornament/floral_swash_centered (symmetric) or\n"
+        "     ornament/floral_swash_left (asymmetric left-leaning). If it looks wavy, use\n"
+        "     separator/wavy_line. If double-line rule, use separator/double_line. null if unsure.\n"
         "  b) badge — Each brand circle/icon: Food Network, OpenTable, YouTube, Hulu,\n"
         "     TripAdvisor, Yelp, etc. that appears as a graphical image (not plain text).\n"
         "     Report each one separately with its own bbox.\n"
+        "     CRITICAL — use exact semantic_label slugs:\n"
+        "       Food Network circle → badge/food_network\n"
+        "       OpenTable / Diners' Choice → badge/opentable_diners_choice\n"
+        "       YouTube play button → badge/youtube\n"
+        "       Hulu logo → badge/hulu\n"
+        "       TripAdvisor owl → badge/tripadvisor\n"
+        "       Yelp → badge/yelp   Michelin → badge/michelin\n"
+        "       Unknown badge → null\n"
         "  c) collage_box — Any bordered panel containing multiple logos (e.g., 'As seen on:'\n"
         "     box with Food Network + YouTube + Hulu icons inside). Report the ENTIRE box as\n"
-        "     one element — the crop will capture all logos inside.\n"
+        "     one element — the crop will capture all logos inside. semantic_label: null.\n"
         "  NOTE: Omit the main restaurant logo (already in logo_bbox) and plain text.\n"
     )
 
     try:
         response = client.messages.create(
-            model="claude-sonnet-4-6",
+            model="claude-3-5-sonnet-latest",
             max_tokens=16384,
             system=_HYBRID_SYSTEM_PROMPT,
             tools=[_HYBRID_TOOL_SCHEMA],
@@ -1299,6 +1325,7 @@ def extract_layout_surya_som(img: Image.Image) -> dict | None:
         elements.append({"type": "logo", "bbox": lb, "position_hint": f"{_py}_{_px}"})
 
     # Graphic elements (ornaments, badges, collage boxes) — crop-and-embed in pipeline
+    # semantic_label is forwarded so pipeline.py can resolve clean assets from S3.
     for ge in data.get("graphic_elements", []):
         bd = ge.get("bbox") or {}
         if scale_x != 1.0 or scale_y != 1.0:
@@ -1310,6 +1337,7 @@ def extract_layout_surya_som(img: Image.Image) -> dict | None:
             elements.append({
                 "type": "image",
                 "subtype": ge.get("subtype", "ornament"),
+                "semantic_label": ge.get("semantic_label"),  # e.g. 'badge/food_network'
                 "bbox": {
                     "x": float(bd.get("x", 0)), "y": float(bd.get("y", 0)),
                     "w": max(1.0, float(bd.get("w", 0))), "h": max(1.0, float(bd.get("h", 0))),
@@ -1649,7 +1677,7 @@ def _verification_pass(
 
     try:
         response = client.messages.create(
-            model="claude-sonnet-4-6",
+            model="claude-3-5-sonnet-latest",
             max_tokens=2048,
             messages=[{
                 "role": "user",
