@@ -29,7 +29,7 @@ def _get_client() -> anthropic.Anthropic | None:
     global _client
     if _client is not None:
         return _client
-    key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
+    key = os.environ.get("ANTHROPIC_API_KEY", "").strip().strip('"').strip("'")
     if not key:
         return None
     kwargs: dict = {"api_key": key}
@@ -315,7 +315,7 @@ def extract_full_layout_via_claude(img: Image.Image) -> dict | None:
 
     try:
         response = client.messages.create(
-            model="claude-3-5-sonnet-latest",
+            model="claude-sonnet-4-6",
             max_tokens=16384,  # 32768 triggers Anthropic SDK streaming requirement error
             messages=[{
                 "role": "user",
@@ -391,7 +391,7 @@ def extract_full_layout_via_tool_use(img: Image.Image) -> dict | None:
 
     try:
         response = client.messages.create(
-            model="claude-3-5-sonnet-latest",
+            model="claude-sonnet-4-6",
             max_tokens=16384,  # 32768 triggers Anthropic SDK streaming requirement error
             system=_TOOL_SYSTEM_PROMPT,
             tools=[_TOOL_SCHEMA],
@@ -695,36 +695,25 @@ You are a High-Precision Restaurant Menu Layout Extractor. Follow this EXACT pro
 
 You receive TWO images of the same menu at identical pixel dimensions:
 - IMAGE 1: Clean original — use to READ text accurately and measure positions
-- IMAGE 2: Same image with numbered Set-of-Marks boxes — use ONLY to match OCR block IDs
+- IMAGE 2: Same image with numbered Set-of-Marks boxes — use to match OCR block IDs [1, 2, 3] 
+  and Graphical Candidate IDs [G1, G2, G3].
 
 ═══ PROCESS ORDER (follow sequentially) ═══
 
 STEP 1 — SKELETON SCAN (do before anything else):
 Visually scan IMAGE 1 for ALL section/category headers in ANY font style —
-cursive, script, handwritten, bold serif, or decorative. Examples to look for:
-"Course One/Two/Three", "Breakfast", "Lunch", "Starters", "Broths & Greens",
-"Main Dishes", "For the Table", "Wines by the glass", "Enjoy more", "Salads",
-"Add On", "Sides", "Experience It", "Appetizer", "Entree", "Dessert", "Kids Menu", etc.
-Every section header MUST appear in your output — these are the structural skeleton.
-Missing any header is the most critical accuracy failure possible.
-
-NUMBERED COURSE HEADERS (most commonly missed): "Course One", "Course Two", "Course Three"
-appear in italic/script font ABOVE their respective course items in the left column.
-"Course One" appears IMMEDIATELY below the logo area — scan specifically for it in
-the gap between the logo and the first food item. Do NOT skip it even if it looks close
-to the logo.
-
-COMPOUND HEADINGS: When cursive "the" (or "a", "la", "le") appears directly before a
-block-text section title (e.g., "the LE PREMIER", "the Château"), treat the FULL compound
-as ONE section header. Do NOT create a separate element for the small cursive word alone —
-this causes rendering overlap. Output "the LE PREMIER" as a single element.
-
+cursive, script, handwritten, bold serif, or decorative.
+...
 STEP 2 — LABEL OCR BLOCKS:
-For each numbered block in the list: assign subtype, column (0=left, 1=right),
-font_family, and corrected_text if OCR garbled the text (especially common near
-decorative overlays — e.g. "LE PRÉMIÑER" must be corrected to "LE PREMIER").
+For each numbered block [1, 2, 3] in the list: assign subtype, column (0=left, 1=right),
+font_family, and corrected_text if OCR garbled the text.
 
-STEP 3 — DECORATIVE ELEMENTS:
+STEP 3 — LABEL GRAPHICAL CANDIDATES:
+For each Magenta block [G1, G2, G3] in IMAGE 2: identify its type in graphic_labels.
+These are candidates detected by a vision pre-pass. Use graphic_labels to assign 
+subtype (badge, ornament, collage_box) and semantic_label.
+
+STEP 4 — DECORATIVE ELEMENTS:
 For each section header from Step 1 that has NO corresponding numbered OCR block:
   a) Find the OCR block immediately BELOW it in the same column from the provided list.
   b) Set bbox bottom edge (y + h) = that block's y − 4px. Estimate height visually.
@@ -732,31 +721,31 @@ For each section header from Step 1 that has NO corresponding numbered OCR block
   If no OCR block is below it in its column: estimate from IMAGE 1 visual position.
 Include ALL headers from Step 1 — completeness here is the #1 accuracy driver.
 
-STEP 4 — LOGO BBOX:
+STEP 5 — LOGO BBOX:
 Draw ONE unified bbox covering the COMPLETE restaurant branding block:
   - All name lines (including small "the", large name, location line)
   - Decorative ornament lines (e.g. "——— SARASOTA ———")
   - Any graphic element (emblem, crest, swash, circular frame behind text)
-  Add generous ~10px padding on all sides. Never split into parts.
+  Add generous ~15px padding on all sides. Never split into parts.
   The MAIN logo is the primary restaurant branding — usually at the top of the menu.
   Secondary logos (footer variants, location badges) go in graphic_elements, NOT here.
 
-STEP 5 — GRAPHIC ELEMENTS (non-text graphical regions):
-Scan IMAGE 1 for graphical elements that CANNOT be captured as text. These will be
-cropped directly from the image — do NOT try to read text from them. Give their bbox.
-Three types to identify:
-  a) ornament — small decorative swash/flourish/curl graphic that appears DIRECTLY BELOW
-     a section header (below "Sharable", "Starters", "Entrées", "Sides", etc.).
-     These are typically 30–80px tall, full-column wide, and look like a symmetrical
-     floral or calligraphic embellishment. Report EACH one separately.
-  b) badge — circular or rectangular brand logo icon (Food Network circle, OpenTable
-     circle, YouTube button, Hulu logo, TripAdvisor owl, Yelp logo, etc.). Each badge
-     that is a graphical image (not plain text) gets its own entry.
-  c) collage_box — a bordered box containing multiple brand logos or mixed graphic+text
-     content, e.g. an "As seen on:" panel with Food Network + YouTube + Hulu logos inside.
-     Report the ENTIRE box as one collage_box (the crops will capture everything inside).
-  IMPORTANT: Do NOT include the main restaurant logo here — that goes in logo_bbox.
-  Do NOT include plain text footer info (addresses, websites) — those are OCR blocks.
+STEP 6 — GRAPHIC ELEMENTS (non-text graphical regions):
+CRITICAL: Scan IMAGE 1 specifically for graphical elements that look like badges, circles, 
+or bordered boxes. 
+
+RECOGNIZING BADGES & BOXES (Zero Tolerance for Missing):
+1. "As seen on:" panel (bottom left) — This is a bordered box with multiple small logos 
+   (Food Network, YouTube, Hulu). You MUST report the ENTIRE bordered box as one 
+   collage_box. Do NOT just label the text inside it.
+2. Circular Badges (right side) — Look for the large "food network" circle and the 
+   "Diners' Choice" circle. These are graphical badges. You MUST capture the entire 
+   circle as a badge, even if OCR found text inside it.
+3. Ornaments — Symmetrical calligraphic swashes below section headers.
+
+If a region contains BOTH text and a graphical container (like a circle or a box), 
+you MUST include it in graphic_labels (if it has a G# box) OR graphic_elements. 
+Failing to capture these containers makes the menu look empty and incomplete.
 
 BBOX RULES:
 - ALL coordinates in IMAGE 1 pixel space
@@ -915,8 +904,27 @@ _HYBRID_TOOL_SCHEMA = {
                     "required": ["subtype", "bbox"],
                 },
             },
+            "graphic_labels": {
+                "type": "array",
+                "description": "Label the detected graphical candidate boxes (G1, G2, etc.) from IMAGE 2.",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "id": {"type": "string", "description": "The G# ID from IMAGE 2 (e.g. G1, G2)."},
+                        "subtype": {
+                            "type": "string",
+                            "enum": ["ornament", "badge", "collage_box"],
+                        },
+                        "semantic_label": {
+                            "type": ["string", "null"],
+                            "description": "Canonical slug (e.g. badge/food_network, badge/opentable_diners_choice).",
+                        },
+                    },
+                    "required": ["id", "subtype"],
+                },
+            },
         },
-        "required": ["background_color", "ocr_labels", "decorative_elements", "menu_data"],
+        "required": ["background_color", "ocr_labels", "decorative_elements", "menu_data", "graphic_labels"],
     },
 }
 
@@ -968,12 +976,16 @@ def _load_surya_models() -> bool:
             from surya.foundation import FoundationPredictor
             from surya.recognition import RecognitionPredictor
             from surya.detection import DetectionPredictor
-            print("[surya] loading models (first run — may download ~1 GB)…")
-            _surya_foundation_predictor = FoundationPredictor()
+            import torch
+            
+            device = "mps" if torch.backends.mps.is_available() else "cpu"
+            print(f"[surya] loading models on {device}...")
+            
+            _surya_foundation_predictor = FoundationPredictor(device=device)
             _surya_rec_predictor = RecognitionPredictor(_surya_foundation_predictor)
-            _surya_det_predictor = DetectionPredictor()
+            _surya_det_predictor = DetectionPredictor(device=device)
             _surya_api_version = "new"
-            print("[surya] models ready (API v0.17+)")
+            print(f"[surya] models ready on {device} (API v0.17+)")
             return True
         except ImportError:
             pass
@@ -985,13 +997,23 @@ def _load_surya_models() -> bool:
         )
         from surya.model.recognition.model import load_model as _rec_model
         from surya.model.recognition.processor import load_processor as _rec_proc
-        print("[surya] loading models (first run — may download ~1 GB)…")
+        import torch
+        
+        device = "mps" if torch.backends.mps.is_available() else "cpu"
+        print(f"[surya] loading old models on {device}...")
+        
         _surya_det_model = _det_model()
+        if device == "mps":
+            _surya_det_model = _surya_det_model.to("mps")
+            
         _surya_det_processor = _det_proc()
         _surya_rec_model = _rec_model()
+        if device == "mps":
+            _surya_rec_model = _surya_rec_model.to("mps")
+            
         _surya_rec_processor = _rec_proc()
         _surya_api_version = "old"
-        print("[surya] models ready (API v0.4.x)")
+        print(f"[surya] models ready on {device} (API v0.4.x)")
         return True
     except Exception as exc:
         print(f"[surya] model load failed: {exc}")
@@ -1057,13 +1079,94 @@ _SOM_PALETTE = [
 ]
 
 
-def _draw_som_annotations(img: Image.Image, blocks: list) -> Image.Image:
+def detect_graphical_candidates(img: Image.Image) -> list[dict]:
+    """
+    Use OpenCV to find candidate regions for badges (circles) and collage boxes (rectangles).
+    Returns list of {'bbox': [x1, y1, x2, y2], 'type': 'candidate_badge'|'candidate_box'}.
+    """
+    if not _CV2_AVAILABLE:
+        return []
+
+    # Convert to grayscale and threshold
+    arr = np.array(img.convert("RGB"))
+    gray = cv2.cvtColor(arr, cv2.COLOR_RGB2GRAY)
+    
+    # Use a larger blur to remove text and focus on shapes
+    blurred = cv2.GaussianBlur(gray, (7, 7), 0)
+    
+    # Adaptive threshold to find edges/borders
+    thresh = cv2.adaptiveThreshold(blurred, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
+                                 cv2.THRESH_BINARY_INV, 11, 2)
+    
+    # Close gaps in shapes
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
+    closed = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel)
+    
+    contours, _ = cv2.findContours(closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    
+    candidates = []
+    h, w = gray.shape
+    for cnt in contours:
+        area = cv2.contourArea(cnt)
+        if area < 2000 or area > (h * w * 0.4): # Skip too small or too large
+            continue
+            
+        x, y, cw, ch = cv2.boundingRect(cnt)
+        aspect_ratio = float(cw) / ch
+        
+        # 1. Check for circularity (Badges)
+        peri = cv2.arcLength(cnt, True)
+        circularity = 4 * np.pi * area / (peri * peri) if peri > 0 else 0
+        
+        if 0.7 < circularity < 1.2 and 0.8 < aspect_ratio < 1.2:
+            candidates.append({
+                "bbox": [float(x), float(y), float(x + cw), float(y + ch)],
+                "type": "candidate_badge"
+            })
+            continue
+
+        # 2. Check for rectangularity (Boxes)
+        rect = cv2.minAreaRect(cnt)
+        box_area = rect[1][0] * rect[1][1]
+        extent = area / box_area if box_area > 0 else 0
+        
+        if extent > 0.8: # Very solid rectangle
+            candidates.append({
+                "bbox": [float(x), float(y), float(x + cw), float(y + ch)],
+                "type": "candidate_box"
+            })
+
+    # Non-max suppression for overlapping candidates
+    if not candidates:
+        return []
+        
+    candidates.sort(key=lambda x: (x["bbox"][2]-x["bbox"][0]) * (x["bbox"][3]-x["bbox"][1]), reverse=True)
+    final = []
+    for cand in candidates:
+        is_covered = False
+        cb = {"x": cand["bbox"][0], "y": cand["bbox"][1], 
+              "w": cand["bbox"][2]-cand["bbox"][0], "h": cand["bbox"][3]-cand["bbox"][1]}
+        for f in final:
+            fb = {"x": f["bbox"][0], "y": f["bbox"][1], 
+                  "w": f["bbox"][2]-f["bbox"][0], "h": f["bbox"][3]-f["bbox"][1]}
+            if _bbox_iou(cb, fb) > 0.5:
+                is_covered = True
+                break
+        if not is_covered:
+            final.append(cand)
+            
+    return final
+
+
+def _draw_som_annotations(img: Image.Image, blocks: list, graphic_candidates: list = None) -> Image.Image:
     """Draw semi-transparent numbered bounding boxes on a copy of img (Set-of-Marks).
     Alpha-blended fill ensures decorative/cursive text underneath remains visible to Claude."""
     from PIL import ImageDraw
     base = img.copy().convert("RGBA")
     overlay = Image.new("RGBA", base.size, (0, 0, 0, 0))
     draw = ImageDraw.Draw(overlay)
+    
+    # 1. Draw Surya OCR blocks (Colored)
     for i, block in enumerate(blocks):
         color = _SOM_PALETTE[i % len(_SOM_PALETTE)]
         r, g, b = int(color[1:3], 16), int(color[3:5], 16), int(color[5:7], 16)
@@ -1076,6 +1179,21 @@ def _draw_som_annotations(img: Image.Image, blocks: list) -> Image.Image:
         lbl_y = max(0, y1 - lbl_h - 1)
         draw.rectangle([lbl_x, lbl_y, lbl_x + lbl_w, lbl_y + lbl_h], fill=(r, g, b, 220))
         draw.text((lbl_x + 3, lbl_y + 2), lbl, fill=(255, 255, 255, 255))
+        
+    # 2. Draw Graphic Candidates (Magenta)
+    if graphic_candidates:
+        magenta = (255, 0, 255) # Magenta for graphic candidates
+        for i, cand in enumerate(graphic_candidates):
+            x1, y1, x2, y2 = cand["bbox"]
+            # Outline only for graphics, no fill to avoid obscuring details
+            draw.rectangle([x1, y1, x2, y2], outline=(*magenta, 255), width=4)
+            lbl = f"G{i + 1}"
+            lbl_w, lbl_h = len(lbl) * 12 + 8, 22
+            lbl_x = x1
+            lbl_y = max(0, y1 - lbl_h - 2)
+            draw.rectangle([lbl_x, lbl_y, lbl_x + lbl_w, lbl_y + lbl_h], fill=(*magenta, 255))
+            draw.text((lbl_x + 4, lbl_y + 3), lbl, fill=(255, 255, 255, 255))
+
     result = Image.alpha_composite(base, overlay)
     return result.convert("RGB")
 
@@ -1103,9 +1221,13 @@ def extract_layout_surya_som(img: Image.Image) -> dict | None:
         print("[surya_som] too few blocks — skipping")
         return None
 
+    # Detect potential graphical regions (badges, boxes) to help Claude find them
+    graphic_candidates = detect_graphical_candidates(img)
+    print(f"[surya_som] {len(graphic_candidates)} graphical candidates found")
+
     # Apply Set-of-Marks (SoM) annotations to the ORIGINAL image before sending to Claude.
     # Annotations on clean original — not on preprocessed — so Claude sees actual visual.
-    annotated_img = _draw_som_annotations(img, surya_blocks)
+    annotated_img = _draw_som_annotations(img, surya_blocks, graphic_candidates)
     
     orig_w, orig_h = img.size
     send_img = annotated_img
@@ -1146,86 +1268,44 @@ def extract_layout_surya_som(img: Image.Image) -> dict | None:
         )
     block_list = "\n".join(lines)
 
+    # Add graphical candidate list
+    g_lines = []
+    for i, g in enumerate(graphic_candidates):
+        x1, y1, x2, y2 = g["bbox"]
+        cx1, cy1 = x1 / scale_x, y1 / scale_y
+        cw, ch = (x2 - x1) / scale_x, (y2 - y1) / scale_y
+        g_lines.append(f"[G{i + 1}] {g['type']} — x={cx1:.0f} y={cy1:.0f} w={cw:.0f} h={ch:.0f}")
+    graphic_list = "\n".join(g_lines)
+
     sw, sh = send_img.size
     user_msg = (
         f"Both images are {sw}×{sh}px. All bbox values must be in this pixel space.\n\n"
-        "Follow the 4-step process from the system prompt exactly.\n\n"
+        "Follow the 6-step process from the system prompt exactly.\n\n"
         "═══ STEP 1 — SKELETON SCAN ═══\n"
-        "Scan IMAGE 1 now. Identify every section/category header — cursive, script, bold, any font.\n"
-        "CRITICAL: Look for 'Course One' in the space BETWEEN the logo and the first food item "
-        "(left column) — it is there in italic/script and is the #1 most missed element.\n"
-        "COMPOUND HEADINGS: If cursive 'the' precedes a block-text title (e.g., 'the LE PREMIER'), "
-        "treat as ONE header — do NOT split into separate elements.\n"
-        "Do not proceed to Step 2 until you have catalogued ALL headers mentally.\n\n"
+        "Scan IMAGE 1 now. Identify every section/category header.\n\n"
         "═══ STEP 2 — OCR BLOCKS ═══\n"
-        f"Surya OCR extracted {len(surya_blocks)} blocks (pixel-accurate positions):\n"
+        f"Surya OCR extracted {len(surya_blocks)} blocks:\n"
         f"{block_list}\n\n"
-        "Label each: subtype, column (0=left, 1=right), font_family, corrected_text if needed.\n"
-        "CRITICAL: Use corrected_text to fix OCR garbling near overlapping decorative elements "
-        "(e.g. 'LE PRÉMIÑER' → 'LE PREMIER', 'CHATeau' → 'CHÂTEAU').\n\n"
-        "═══ STEP 3 — DECORATIVE ELEMENTS ═══\n"
-        "3a) SECTION HEADERS: For every cursive/script header from Step 1 with no numbered OCR block:\n"
-        "  - Find the OCR block immediately BELOW it in the same column.\n"
-        "  - Set bbox bottom (y + h) = that block's y − 4px. Estimate height visually.\n"
-        "  - Measure x and width from IMAGE 1 directly.\n"
-        "  - If no block below in same column: estimate from IMAGE 1 visual position.\n"
-        "  COMPOUND CHECK: If a short cursive word ('the', 'le', 'la') appears in the OCR block\n"
-        "  list adjacent to a section title, do NOT add it as a separate decorative element.\n"
-        "  Instead, if the full compound isn't already in the OCR list, add ONE decorative\n"
-        "  element with the full text (e.g., 'the LE PREMIER') covering both words.\n\n"
-        "3b) PRICE TABLES — ZERO TOLERANCE for missing prices.\n"
-        "  Scan IMAGE 1 systematically for ALL price/add-on tables. For 'Add On', 'Sides',\n"
-        "  or any multi-column price grid:\n"
-        "  1. List every ROW you see in IMAGE 1 (item name + price)\n"
-        "  2. Cross-check IMAGE 2 — does EACH price number have an OCR box?\n"
-        "  3. For EVERY missing price (especially single digits: 3, 4, 5, 7, 8):\n"
-        "     - Add as decorative_element with subtype='item_price'\n"
-        "     - Bbox: place it immediately to the RIGHT of the item name block\n"
-        "     - Width ~30px, height matching item name height\n"
-        "  4. For EVERY missing item name (left of a price number with no name box):\n"
-        "     - Add as decorative_element with subtype='item_name'\n"
-        "  EXAMPLE: 'coffee/tea  3' — if '3' has no box in IMAGE 2, add {content:'3', subtype:'item_price', bbox:...}\n"
-        "  Do this for EVERY row in EVERY price table. Missing even one price is failure.\n\n"
-        "═══ STEP 4 — LOGO BBOX ═══\n"
-        "In IMAGE 1, draw ONE bbox tightly around the PRIMARY restaurant branding ONLY. Include:\n"
-        "  - Small 'the' text above the main name (if present)\n"
-        "  - Large restaurant name (e.g. 'CHÂTeau', 'CHATEAU')\n"
-        "  - Location line (e.g. '— ANNA MARIA —', '— SARASOTA —')\n"
-        "  - Decorative swash/flourish directly part of the logo graphic\n"
-        "Do NOT include: background illustrations (pumpkins, watermarks, photo art),\n"
-        "  section headers ('Kids Menu', 'Dinner Menu'), body text.\n"
-        "  Secondary/footer logo variants (repeated logos in the bottom section) go in\n"
-        "  graphic_elements as 'badge' — NOT here.\n"
-        "Add 8px padding on all sides. ONE unified bbox — never split.\n\n"
-        "═══ STEP 5 — GRAPHIC ELEMENTS ═══\n"
-        "Scan IMAGE 1 for non-text graphical regions. Report bbox + semantic_label for each:\n"
-        "  a) ornament — EACH section header (Sharable, Starters, Entrées, Broths & Greens,\n"
-        "     Sides, etc.) has a small decorative swash/flourish DIRECTLY BELOW the cursive\n"
-        "     text. These look like symmetrical floral or calligraphic curls (~30-80px tall).\n"
-        "     Report one per section header — this is a mandatory element. Do not skip.\n"
-        "     semantic_label for swashes: ornament/floral_swash_centered (symmetric) or\n"
-        "     ornament/floral_swash_left (asymmetric left-leaning). If it looks wavy, use\n"
-        "     separator/wavy_line. If double-line rule, use separator/double_line. null if unsure.\n"
-        "  b) badge — Each brand circle/icon: Food Network, OpenTable, YouTube, Hulu,\n"
-        "     TripAdvisor, Yelp, etc. that appears as a graphical image (not plain text).\n"
-        "     Report each one separately with its own bbox.\n"
-        "     CRITICAL — use exact semantic_label slugs:\n"
-        "       Food Network circle → badge/food_network\n"
-        "       OpenTable / Diners' Choice → badge/opentable_diners_choice\n"
-        "       YouTube play button → badge/youtube\n"
-        "       Hulu logo → badge/hulu\n"
-        "       TripAdvisor owl → badge/tripadvisor\n"
-        "       Yelp → badge/yelp   Michelin → badge/michelin\n"
-        "       Unknown badge → null\n"
-        "  c) collage_box — Any bordered panel containing multiple logos (e.g., 'As seen on:'\n"
-        "     box with Food Network + YouTube + Hulu icons inside). Report the ENTIRE box as\n"
-        "     one element — the crop will capture all logos inside. semantic_label: null.\n"
-        "  NOTE: Omit the main restaurant logo (already in logo_bbox) and plain text.\n"
+        "═══ STEP 3 — GRAPHICAL CANDIDATES ═══\n"
+        "Pre-pass detected potential graphical regions (Magenta boxes G1, G2, etc.):\n"
+        f"{graphic_list or '(none)'}\n"
+        "Identify these in the graphic_labels tool field.\n\n"
+        "═══ STEP 4 — DECORATIVE ELEMENTS ═══\n"
+        "SECTION HEADERS: For every cursive/script header from Step 1 with no numbered OCR block.\n\n"
+        "═══ STEP 5 — LOGO BBOX ═══\n"
+        "Draw ONE bbox tightly around the PRIMARY restaurant branding in IMAGE 1.\n\n"
+        "═══ STEP 6 — GRAPHIC ELEMENTS ═══\n"
+        "Scan IMAGE 1 for ANY OTHER non-text graphical regions not already labeled.\n"
+        "CRITICAL — use exact semantic_label slugs:\n"
+        "  Food Network → badge/food_network\n"
+        "  OpenTable / Diners' Choice → badge/opentable_diners_choice\n"
+        "  YouTube → badge/youtube   Hulu → badge/hulu\n"
+        "  TripAdvisor → badge/tripadvisor   Yelp → badge/yelp\n"
     )
 
     try:
         response = client.messages.create(
-            model="claude-3-5-sonnet-latest",
+            model="claude-sonnet-4-6",
             max_tokens=16384,
             system=_HYBRID_SYSTEM_PROMPT,
             tools=[_HYBRID_TOOL_SCHEMA],
@@ -1323,6 +1403,22 @@ def extract_layout_surya_som(img: Image.Image) -> dict | None:
         _py = "top" if _lb_y < orig_h * 0.4 else ("middle" if _lb_y < orig_h * 0.7 else "bottom")
         _px = "left" if _lb_cx < orig_w * 0.35 else ("right" if _lb_cx > orig_w * 0.65 else "center")
         elements.append({"type": "logo", "bbox": lb, "position_hint": f"{_py}_{_px}"})
+
+    # Process graphic_labels (G# mappings)
+    graphic_label_map = {lbl.get("id"): lbl for lbl in data.get("graphic_labels", []) if lbl.get("id")}
+    for i, g in enumerate(graphic_candidates):
+        lbl = graphic_label_map.get(f"G{i+1}")
+        if lbl:
+            x1, y1, x2, y2 = g["bbox"]
+            elements.append({
+                "type": "image",
+                "subtype": lbl.get("subtype", "ornament"),
+                "semantic_label": lbl.get("semantic_label"),
+                "bbox": {
+                    "x": float(x1), "y": float(y1),
+                    "w": float(x2 - x1), "h": float(y2 - y1),
+                },
+            })
 
     # Graphic elements (ornaments, badges, collage boxes) — crop-and-embed in pipeline
     # semantic_label is forwarded so pipeline.py can resolve clean assets from S3.
@@ -1677,7 +1773,7 @@ def _verification_pass(
 
     try:
         response = client.messages.create(
-            model="claude-3-5-sonnet-latest",
+            model="claude-sonnet-4-6",
             max_tokens=2048,
             messages=[{
                 "role": "user",

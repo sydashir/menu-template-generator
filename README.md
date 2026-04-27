@@ -31,7 +31,7 @@ source venv/bin/activate
 uvicorn main:app --reload
 ```
 
-Go to `http://localhost:8000/docs`, hit **POST /process**, upload a menu file.
+Go to `did`, hit **POST /process**, upload a menu file.
 
 Or via curl:
 ```bash
