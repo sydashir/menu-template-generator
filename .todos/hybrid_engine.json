@@ -1,0 +1,8 @@
+[
+  {"id": "preload_templates", "task": "Step 1: Preload Asset Templates in claude_extractor.py", "status": "completed"},
+  {"id": "template_matching", "task": "Step 2: Implement Template Matching Pre-Pass", "status": "completed"},
+  {"id": "enhance_heuristics", "task": "Step 3: Enhance Heuristics in detect_graphical_candidates", "status": "completed"},
+  {"id": "dynamic_slicing", "task": "Step 4: Implement Dynamic Slicing (SAHI-lite)", "status": "completed"},
+  {"id": "update_prompts", "task": "Step 5: Update Prompts and user_msg formatting", "status": "completed"},
+  {"id": "verify", "task": "Step 6: Verification & Testing", "status": "completed"}
+]

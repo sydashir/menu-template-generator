@@ -29,7 +29,7 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
 
 from dotenv import load_dotenv
-load_dotenv()
+load_dotenv(override=True)
 
 # ── Asset manifest ──────────────────────────────────────────────────────────
 # Each entry: (canonical_label, source_url_or_None, local_gen_fn)

@@ -1,0 +1,40 @@
+<h2>How should we programmatically extract and place graphics?</h2>
+<p class="subtitle">Claude prompts alone are failing to capture accurate bounding boxes for logos, shapes, and separators. Here are three programmatic approaches we can research and implement to hit your 95% accuracy goal.</p>
+
+<div class="options">
+  <div class="option" data-choice="a" onclick="toggleSelect(this)">
+    <div class="letter">A</div>
+    <div class="content">
+      <h3>Geometric / Spatial Logic (Heuristics)</h3>
+      <p>Analyze the text blocks (which are highly accurate) and calculate where separators <i>should</i> logically exist. For example, insert a separator in the large vertical gaps between "Category Headers".</p>
+      <div class="pros-cons">
+        <div class="pros"><h4>Pros</h4><ul><li>Fast & predictable</li><li>Doesn't rely on image noise</li></ul></div>
+        <div class="cons"><h4>Cons</h4><ul><li>Might place separators where none exist visually</li><li>Hard to guess logo positions</li></ul></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="option" data-choice="b" onclick="toggleSelect(this)">
+    <div class="letter">B</div>
+    <div class="content">
+      <h3>Pure Computer Vision (OpenCV)</h3>
+      <p>Use classic CV algorithms (Hough Lines, Contours, Template Matching) directly on the menu image to detect every line, circle, and shape, completely ignoring Claude for graphics.</p>
+      <div class="pros-cons">
+        <div class="pros"><h4>Pros</h4><ul><li>Finds actual pixels</li><li>Highly accurate for straight lines</li></ul></div>
+        <div class="cons"><h4>Cons</h4><ul><li>Background textures/noise cause false positives</li><li>Doesn't know if a shape is a separator or part of a logo</li></ul></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="option" data-choice="c" onclick="toggleSelect(this)">
+    <div class="letter">C</div>
+    <div class="content">
+      <h3>Hybrid: OpenCV + Semantic Filtering (Recommended)</h3>
+      <p>Use OpenCV to find ALL physical shapes/lines on the menu. Then, use the highly accurate text bounding boxes to <i>validate</i> them. (e.g., A line found between a Category Header and its items is a valid separator; a shape near the top is a logo).</p>
+      <div class="pros-cons">
+        <div class="pros"><h4>Pros</h4><ul><li>Highest potential accuracy (95%+)</li><li>Marries physical reality with logical context</li></ul></div>
+        <div class="cons"><h4>Cons</h4><ul><li>More complex to build and tune</li></ul></div>
+      </div>
+    </div>
+  </div>
+</div>

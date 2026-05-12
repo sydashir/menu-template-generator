@@ -2,10 +2,9 @@ import base64
 import hashlib
 from datetime import datetime, timezone
 from typing import List, Optional, Tuple
-
 from models import (
     BBox, TextStyle, LineStyle,
-    TextElement, LogoElement, SeparatorElement,
+    TextElement, LogoElement, SeparatorElement, ImageElement,
     Template, TemplateMeta, CanvasMeta,
     RawBlock, RawLine, SemanticType, SeparatorSubtype,
 )
@@ -42,6 +41,7 @@ def build_template(
     page: int = 1,
     side: str = "full",
     logo_info: Optional[dict] = None,
+    background_color: str = "#ffffff",
 ) -> Template:
     elements = []
     max_font = max((b.font_size for b, _ in classified), default=12.0)
@@ -59,7 +59,9 @@ def build_template(
             style=TextStyle(
                 font_size=font_size,
                 font_weight="bold" if block.is_bold else "normal",
-                font_style="italic" if block.is_italic else "normal",
+                font_style="italic" if (block.is_italic or block.font_family == "decorative-script") else "normal",
+                font_family=block.font_family,
+                color=block.color,
                 text_align=alignment,
             ),
             column=col,
@@ -89,7 +91,10 @@ def build_template(
                 w=round(w, 1),
                 h=round(h, 1),
             ),
-            style=LineStyle(stroke_width=round(h if line.orientation == "horizontal" else 2.0, 1)),
+            style=LineStyle(
+                color=line.color or "#000000",
+                stroke_width=round(h if line.orientation == "horizontal" else 2.0, 1),
+            ),
         )
         elements.append(sep.model_dump())
 
@@ -118,7 +123,7 @@ def build_template(
             generated_at=datetime.now(timezone.utc).isoformat(),
             num_columns=max(col_assignments, default=0) + 1,
         ),
-        canvas=CanvasMeta(width=canvas_w, height=canvas_h),
+        canvas=CanvasMeta(width=canvas_w, height=canvas_h, background_color=background_color),
         elements=elements,
     )
 
@@ -215,6 +220,8 @@ def build_template_from_claude(
                         stroke_width=_safe_float(sd.get("stroke_width"), 1.5),
                         stroke_style=sd.get("stroke_style") if sd.get("stroke_style") in ("solid", "dashed", "dotted") else "solid",
                     ),
+                    image_data=raw_el.get("image_data"),
+                    semantic_label=raw_el.get("semantic_label"),
                 )
                 elements.append(sep.model_dump())
 
@@ -228,15 +235,17 @@ def build_template_from_claude(
                 elements.append(logo.model_dump())
 
             elif el_type == "image":
-                # Graphic element (ornament swash, brand badge, collage box) — crop already embedded
-                elements.append({
-                    "type": "image",
-                    "subtype": raw_el.get("subtype", "ornament"),
-                    "id": _make_id("img", round(bbox.x), round(bbox.y)),
-                    "bbox": bbox.model_dump(),
-                    "image_data": raw_el.get("image_data"),
-                    "semantic_label": raw_el.get("semantic_label"),  # forwarded for traceability
-                })
+                _valid_img_subs = {"badge", "ornament", "collage_box"}
+                raw_sub = raw_el.get("subtype", "badge")
+                img_subtype = raw_sub if raw_sub in _valid_img_subs else "ornament"
+                img_el = ImageElement(
+                    id=_make_id("img", round(bbox.x), round(bbox.y)),
+                    subtype=img_subtype,
+                    bbox=bbox,
+                    image_data=raw_el.get("image_data"),
+                    semantic_label=raw_el.get("semantic_label"),
+                )
+                elements.append(img_el.model_dump())
 
         except Exception as e:
             print(f"[builder] skipped element type={raw_el.get('type')!r} subtype={raw_el.get('subtype')!r}: {e}")

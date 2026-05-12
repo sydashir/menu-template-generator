@@ -405,53 +405,76 @@
       }
     }
 
-    function drawSeparatorElement(el) {
+    async function drawSeparatorElement(el) {
       const b = el.bbox || {};
       const style = el.style || {};
       const x = safeNum(b.x) * state.scale;
       const y = safeNum(b.y) * state.scale;
       const w = Math.max(1, safeNum(b.w)) * state.scale;
       const h = Math.max(1, safeNum(b.h)) * state.scale;
+
+      // S3 asset (wavy_line, ornament, etc.) — render as image with aspect-ratio contain
+      if (el.image_data) {
+        const key = el.image_data.slice(0, 80);
+        if (!state.logoImageCache.has(key)) {
+          const img = new Image();
+          const p = new Promise((resolve, reject) => {
+            img.onload = () => resolve(img);
+            img.onerror = reject;
+          });
+          img.src = `data:image/png;base64,${el.image_data}`;
+          state.logoImageCache.set(key, p);
+        }
+        try {
+          const img = await state.logoImageCache.get(key);
+          const scale = Math.min(w / img.width, h / img.height);
+          const drawW = img.width * scale;
+          const drawH = img.height * scale;
+          ctx.drawImage(img, x + (w - drawW) / 2, y + (h - drawH) / 2, drawW, drawH);
+        } catch {
+          _drawSeparatorLine(el, x, y, w, h, style);
+        }
+        if (els.showBBoxes.checked) {
+          ctx.strokeStyle = '#f59e0b'; ctx.lineWidth = 1; ctx.strokeRect(x, y, w, h);
+        }
+        return;
+      }
+
+      _drawSeparatorLine(el, x, y, w, h, style);
+
+      if (els.showBBoxes.checked) {
+        ctx.strokeStyle = '#f59e0b'; ctx.lineWidth = 1; ctx.strokeRect(x, y, w, h);
+      }
+    }
+
+    function _drawSeparatorLine(el, x, y, w, h, style) {
       const isDecorative = el.subtype === 'decorative_divider';
       const isBorder = el.subtype === 'border';
-
-      ctx.strokeStyle = style.color || '#000000';
+      ctx.strokeStyle = (style || el.style || {}).color || '#000000';
 
       if (isBorder) {
-        // Rectangular sidebar/section border — draw as outlined rect, not a center line
-        ctx.lineWidth = Math.max(1, safeNum(style.stroke_width, 2)) * state.scale;
+        ctx.lineWidth = Math.max(1, safeNum((style || {}).stroke_width, 2)) * state.scale;
         ctx.strokeRect(x, y, w, h);
       } else if (isDecorative) {
-        // Decorative divider — thin dashed centerline (using stroke_width=h would make solid bar)
         ctx.lineWidth = 1.5 * state.scale;
         ctx.setLineDash([10 * state.scale, 5 * state.scale]);
         ctx.beginPath();
         if ((el.orientation || 'horizontal') === 'vertical') {
-          ctx.moveTo(x + w / 2, y);
-          ctx.lineTo(x + w / 2, y + h);
+          ctx.moveTo(x + w / 2, y); ctx.lineTo(x + w / 2, y + h);
         } else {
-          ctx.moveTo(x, y + h / 2);
-          ctx.lineTo(x + w, y + h / 2);
+          ctx.moveTo(x, y + h / 2); ctx.lineTo(x + w, y + h / 2);
         }
         ctx.stroke();
         ctx.setLineDash([]);
       } else {
-        ctx.lineWidth = Math.max(1, safeNum(style.stroke_width, 2)) * state.scale;
+        ctx.lineWidth = Math.max(1, safeNum((style || {}).stroke_width, 2)) * state.scale;
         ctx.beginPath();
         if ((el.orientation || 'horizontal') === 'vertical') {
-          ctx.moveTo(x + w / 2, y);
-          ctx.lineTo(x + w / 2, y + h);
+          ctx.moveTo(x + w / 2, y); ctx.lineTo(x + w / 2, y + h);
         } else {
-          ctx.moveTo(x, y + h / 2);
-          ctx.lineTo(x + w, y + h / 2);
+          ctx.moveTo(x, y + h / 2); ctx.lineTo(x + w, y + h / 2);
         }
         ctx.stroke();
-      }
-
-      if (els.showBBoxes.checked) {
-        ctx.strokeStyle = '#f59e0b';
-        ctx.lineWidth = 1;
-        ctx.strokeRect(x, y, w, h);
       }
     }
 
@@ -476,7 +499,13 @@
         }
         try {
           const img = await state.logoImageCache.get(key);
-          ctx.drawImage(img, x, y, w, h);
+          // Maintain aspect ratio (object-fit: contain)
+          const scale = Math.min(w / img.width, h / img.height);
+          const drawW = img.width * scale;
+          const drawH = img.height * scale;
+          const drawX = x + (w - drawW) / 2;
+          const drawY = y + (h - drawH) / 2;
+          ctx.drawImage(img, drawX, drawY, drawW, drawH);
         } catch {
           drawLogoPlaceholder(x, y, w, h);
         }
@@ -512,7 +541,13 @@
         }
         try {
           const img = await state.logoImageCache.get(key);
-          ctx.drawImage(img, x, y, w, h);
+          // Maintain aspect ratio (object-fit: contain)
+          const scale = Math.min(w / img.width, h / img.height);
+          const drawW = img.width * scale;
+          const drawH = img.height * scale;
+          const drawX = x + (w - drawW) / 2;
+          const drawY = y + (h - drawH) / 2;
+          ctx.drawImage(img, drawX, drawY, drawW, drawH);
         } catch { /* skip */ }
       }
 
@@ -553,13 +588,16 @@
       clearCanvas();
 
       const elements = Array.isArray(t.elements) ? t.elements : [];
+      // Pass 1: plain text + line separators (no image_data)
       for (const el of elements) {
         if (el.type === 'text') drawTextElement(el);
-        else if (el.type === 'separator') drawSeparatorElement(el);
+        else if (el.type === 'separator' && !el.image_data) await drawSeparatorElement(el);
       }
+      // Pass 2: image assets — logos, badges, S3 separators (wavy lines, ornaments)
       for (const el of elements) {
         if (el.type === 'logo') await drawLogoElement(el);
         else if (el.type === 'image') await drawImageElement(el);
+        else if (el.type === 'separator' && el.image_data) await drawSeparatorElement(el);
       }
 
       els.jsonPreview.textContent = JSON.stringify(t, null, 2);

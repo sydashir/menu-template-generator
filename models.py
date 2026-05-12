@@ -1,6 +1,6 @@
 from __future__ import annotations
 from typing import List, Optional, Literal, Dict, Any
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class BBox(BaseModel):
@@ -47,6 +47,7 @@ class RawBlock(BaseModel):
     is_bold: bool = False
     is_italic: bool = False
     font_family: str = "sans-serif"
+    color: str = "#000000"
     page: int = 0
     source: Literal["pdf", "ocr"] = "ocr"
 
@@ -58,6 +59,7 @@ class RawLine(BaseModel):
     y2: float
     orientation: Literal["horizontal", "vertical"] = "horizontal"
     subtype: Optional[str] = None  # e.g. "border" for detected rectangular boxes
+    color: Optional[str] = None   # hex color from PDF stroke/fill (e.g. "#c8860a" for gold)
 
 
 class TextElement(BaseModel):
@@ -79,6 +81,15 @@ class LogoElement(BaseModel):
     position_hint: str = "top_center"
 
 
+class ImageElement(BaseModel):
+    id: str
+    type: Literal["image"] = "image"
+    subtype: Literal["badge", "ornament", "collage_box"] = "badge"
+    bbox: BBox
+    image_data: Optional[str] = None
+    semantic_label: Optional[str] = None
+
+
 class SeparatorElement(BaseModel):
     id: str
     type: Literal["separator"] = "separator"
@@ -86,6 +97,8 @@ class SeparatorElement(BaseModel):
     orientation: Literal["horizontal", "vertical"] = "horizontal"
     bbox: BBox
     style: LineStyle = Field(default_factory=LineStyle)
+    image_data: Optional[str] = None  # Base64-encoded clean PNG from S3 (e.g. for wavy_line)
+    semantic_label: Optional[str] = None # Canonical S3 label
 
 
 class CanvasMeta(BaseModel):
@@ -115,6 +128,14 @@ class MenuItem(BaseModel):
     name: str
     description: Optional[str] = None
     price: Optional[str] = None
+    
+    @model_validator(mode='before')
+    @classmethod
+    def coerce_price_to_str(cls, data: Any) -> Any:
+        if isinstance(data, dict) and "price" in data and data["price"] is not None:
+            data["price"] = str(data["price"])
+        return data
+
 
 
 class MenuCategory(BaseModel):

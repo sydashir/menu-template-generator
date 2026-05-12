@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Visual Companion</title>
+    <style>
+        :root {
+            --bg: #1a1a1a;
+            --surface: #2d2d2d;
+            --primary: #4caf50;
+            --text: #ffffff;
+            --text-secondary: #b0b0b0;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: var(--bg);
+            color: var(--text);
+            margin: 0;
+            padding: 2rem;
+            line-height: 1.5;
+        }
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+        }
+        h2 {
+            color: var(--primary);
+            margin-top: 0;
+        }
+        .subtitle {
+            color: var(--text-secondary);
+            font-size: 1.1rem;
+            margin-bottom: 2rem;
+        }
+        .options {
+            display: grid;
+            gap: 1.5rem;
+        }
+        .option {
+            background-color: var(--surface);
+            padding: 1.5rem;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+            border-left: 4px solid transparent;
+            position: relative;
+        }
+        .option:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+        }
+        .option.selected {
+            border-left-color: var(--primary);
+            background-color: #353535;
+        }
+        .letter {
+            position: absolute;
+            top: 1rem;
+            right: 1.5rem;
+            font-size: 2rem;
+            font-weight: bold;
+            color: rgba(255,255,255,0.1);
+        }
+        h3 {
+            margin-top: 0;
+            color: var(--primary);
+        }
+        .pros-cons {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 1rem;
+            margin-top: 1rem;
+            font-size: 0.9rem;
+        }
+        .pros h4 { color: #81c784; margin-bottom: 0.5rem; }
+        .cons h4 { color: #e57373; margin-bottom: 0.5rem; }
+        ul { padding-left: 1.2rem; margin: 0; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h2>Programmatic Graphics Extraction Strategy</h2>
+        <p class="subtitle">Claude prompts alone are failing to capture accurate bounding boxes. We need robust logic to place S3 assets and separators with 95%+ accuracy.</p>
+
+        <div class="options">
+            <div class="option" onclick="this.classList.toggle('selected')">
+                <div class="letter">A</div>
+                <h3>Geometric / Spatial Heuristics</h3>
+                <p>Analyze high-accuracy text blocks to infer where separators must exist. (e.g., vertical gaps between Category Headers).</p>
+                <div class="pros-cons">
+                    <div class="pros"><h4>Pros</h4><ul><li>Fast & Predictable</li><li>No image noise</li></ul></div>
+                    <div class="cons"><h4>Cons</h4><ul><li>May invent separators</li><li>No logo detection</li></ul></div>
+                </div>
+            </div>
+
+            <div class="option" onclick="this.classList.toggle('selected')">
+                <div class="letter">B</div>
+                <h3>Computer Vision (OpenCV)</h3>
+                <p>Use Hough Lines, Contours, and Template Matching directly on the pixels to detect physical shapes.</p>
+                <div class="pros-cons">
+                    <div class="pros"><h4>Pros</h4><ul><li>Finds actual pixels</li><li>Great for lines</li></ul></div>
+                    <div class="cons"><h4>Cons</h4><ul><li>Noise sensitive</li><li>No semantic context</li></ul></div>
+                </div>
+            </div>
+
+            <div class="option" onclick="this.classList.toggle('selected')">
+                <div class="letter">C</div>
+                <h3>Hybrid: CV + Semantic Filtering</h3>
+                <p>Use OpenCV to find shapes, then use text bounding boxes to validate and label them semantically.</p>
+                <div class="pros-cons">
+                    <div class="pros"><h4>Pros</h4><ul><li>Highest potential (95%+)</li><li>Context-aware reality</li></ul></div>
+                    <div class="cons"><h4>Cons</h4><ul><li>Higher complexity</li><li>More tuning required</li></ul></div>
+                </div>
+            </div>
+        </div>
+    </div>
+</body>
+</html>

@@ -1,7 +1,7 @@
 import cv2
 import numpy as np
 from PIL import Image
-from typing import List, Tuple
+from typing import List, Tuple, Dict, Any
 
 from models import RawLine
 
@@ -31,6 +31,48 @@ def detect_separators(img: Image.Image) -> List[RawLine]:
     boxes, remaining_h, remaining_v = _merge_into_boxes(h_lines, v_lines, w, h)
 
     return _dedup_lines(boxes + remaining_h + remaining_v)
+
+
+def detect_graphic_blobs(img: Image.Image) -> List[Dict[str, Any]]:
+    """
+    Detect non-text graphical blobs (potential logos, ornaments, badges).
+    Returns list of dicts with 'bbox' and 'contour_area'.
+    """
+    arr = np.array(img.convert("L"))
+    h, w = arr.shape
+
+    # Adaptive thresholding to find all foreground elements
+    binary = cv2.adaptiveThreshold(
+        arr, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 11, 2
+    )
+
+    # Use a medium-sized kernel to merge nearby components into single graphic blobs
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
+    dilated = cv2.dilate(binary, kernel, iterations=1)
+
+    contours, _ = cv2.findContours(dilated, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+    blobs = []
+    for cnt in contours:
+        x, y, cw, ch = cv2.boundingRect(cnt)
+        area = cv2.contourArea(cnt)
+        
+        # Filter out very small noise (smaller than a typical character)
+        if cw < 15 or ch < 15 or area < 200:
+            continue
+            
+        # Filter out extremely thin horizontal/vertical lines (already handled by detect_separators)
+        if cw > w * 0.8 and ch < 10:
+            continue
+        if ch > h * 0.8 and cw < 10:
+            continue
+
+        blobs.append({
+            "bbox": {"x": float(x), "y": float(y), "w": float(cw), "h": float(ch)},
+            "area": float(area)
+        })
+
+    return blobs
 
 
 # ---------------------------------------------------------------------------

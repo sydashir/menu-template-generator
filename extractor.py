@@ -15,6 +15,56 @@ SUPPORTED_PDF_EXTS = {".pdf"}
 PDF_RENDER_DPI = 200
 
 
+def _map_font_family(font_name: str) -> str:
+    """Map a PDF font name to one of our standard web-renderable families."""
+    fn = font_name.lower()
+    if any(kw in fn for kw in [
+        'script', 'brush', 'handwrit', 'zapfino', 'vibes', 'cursive',
+        'edwardian', 'shelley', 'mistral', 'palace', 'kunstler', 'corsiva',
+        'chancery', 'calligraph', 'vivaldi', 'snell', 'lavanderia',
+        'signature',
+    ]):
+        return 'decorative-script'
+    if any(kw in fn for kw in [
+        'display', 'blackletter', 'broadway', 'copperplate', 'stencil', 'impact',
+    ]):
+        return 'display'
+    if any(kw in fn for kw in [
+        'garamond', 'palatino', 'times', 'roman', 'baskerville', 'bodoni',
+        'caslon', 'didot', 'sabon', 'minion', 'trajan', 'centaur', 'galliard',
+        'goudy', 'perpetua', 'cochin', 'hoefler',
+    ]):
+        return 'serif'
+    return 'sans-serif'
+
+
+def _color_to_hex(color) -> str:
+    """Convert a PyMuPDF color tuple (0-1 floats) to a CSS hex string."""
+    if color is None or len(color) < 3:
+        return "#000000"
+    r = max(0, min(255, int(round(color[0] * 255))))
+    g = max(0, min(255, int(round(color[1] * 255))))
+    b = max(0, min(255, int(round(color[2] * 255))))
+    return f"#{r:02x}{g:02x}{b:02x}"
+
+
+def _span_color_to_hex(color) -> str:
+    """Convert a PyMuPDF span color to CSS hex.
+    In PyMuPDF >= 1.18, span["color"] is a packed int 0xRRGGBB.
+    Older versions may return a float grayscale (0.0–1.0)."""
+    if color is None:
+        return "#000000"
+    if isinstance(color, int):
+        r = (color >> 16) & 0xFF
+        g = (color >> 8) & 0xFF
+        b = color & 0xFF
+        return f"#{r:02x}{g:02x}{b:02x}"
+    if isinstance(color, float):
+        v = max(0, min(255, int(round(color * 255))))
+        return f"#{v:02x}{v:02x}{v:02x}"
+    return "#000000"
+
+
 def load_pages(file_path: str) -> List[Tuple[Image.Image, int]]:
     """Return list of (PIL Image, page_index) for any supported input."""
     p = Path(file_path)
@@ -75,6 +125,8 @@ def extract_blocks_pdf(file_path: str) -> List[List[RawBlock]]:
                              or bool(re.search(r'bold|black|heavy|demi|semibold|extrabold',
                                                span["font"], re.I))),
                         is_italic="Italic" in span["font"] or "italic" in span["font"],
+                        font_family=_map_font_family(span["font"]),
+                        color=_span_color_to_hex(span.get("color", 0)),
                         page=page_idx,
                         source="pdf",
                     ))
@@ -148,7 +200,11 @@ def extract_separators_pdf(
                 if max(dx, dy) < _MIN_LINE_PX:
                     continue  # skip short decorative strokes
                 orientation = "horizontal" if dx >= dy else "vertical"
-                lines.append(RawLine(x1=x1, y1=y1, x2=x2, y2=y2, orientation=orientation))
+                lines.append(RawLine(
+                    x1=x1, y1=y1, x2=x2, y2=y2,
+                    orientation=orientation,
+                    color=_color_to_hex(d_color),
+                ))
 
             # Rectangles used as dividers
             elif kind == "re" and len(item) >= 2:

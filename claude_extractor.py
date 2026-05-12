@@ -8,6 +8,7 @@ import base64
 os.environ.setdefault("PYTORCH_MPS_HIGH_WATERMARK_RATIO", "0.0")
 
 import anthropic
+from typing import List, Dict, Any
 from dotenv import load_dotenv
 from PIL import Image
 
@@ -20,9 +21,79 @@ except ImportError:
 
 from models import MenuData, MenuCategory, MenuItem
 
-load_dotenv()
+load_dotenv(override=True)
 
 _client: anthropic.Anthropic | None = None
+_LOGO_TEMPLATES: dict[str, np.ndarray] = {}
+
+def _load_logo_templates():
+    global _LOGO_TEMPLATES
+    if not _CV2_AVAILABLE:
+        return
+    asset_dir = os.path.join(os.path.dirname(__file__), "local_assets")
+    if not os.path.exists(asset_dir):
+        return
+    
+    # Target logos/badges for template matching
+    target_stems = [
+        "youtube", "yelp", "tripadvisor", "food_network", "hulu", 
+        "michelin", "zagat", "opentable_diners_choice", "best_of"
+    ]
+    
+    for stem in target_stems:
+        path = os.path.join(asset_dir, f"{stem}.png")
+        if os.path.exists(path):
+            tpl = cv2.imread(path, cv2.IMREAD_GRAYSCALE)
+            if tpl is not None:
+                _LOGO_TEMPLATES[stem] = tpl
+    if _LOGO_TEMPLATES:
+        print(f"[claude_extractor] Loaded {len(_LOGO_TEMPLATES)} logo templates from local_assets")
+
+_load_logo_templates()
+
+
+def match_badges(img: Image.Image) -> List[Dict[str, Any]]:
+    """
+    Use OpenCV template matching to find known badges (Tripadvisor, Yelp, etc.) in the menu.
+    Returns a list of detected badge elements with semantic labels and exact bboxes.
+    """
+    if not _CV2_AVAILABLE or not _LOGO_TEMPLATES:
+        return []
+    
+    # Convert PIL to OpenCV grayscale
+    gray_img = cv2.cvtColor(np.array(img.convert("RGB")), cv2.COLOR_RGB2GRAY)
+    results = []
+    
+    # Threshold for template matching confidence
+    THRESHOLD = 0.75
+    
+    for stem, tpl in _LOGO_TEMPLATES.items():
+        th, tw = tpl.shape[:2]
+        
+        # Template matching
+        res = cv2.matchTemplate(gray_img, tpl, cv2.TM_CCOEFF_NORMED)
+        loc = np.where(res >= THRESHOLD)
+        
+        # Group near-duplicate detections
+        rects = []
+        for pt in zip(*loc[::-1]):
+            rects.append([int(pt[0]), int(pt[1]), int(tw), int(th)])
+        
+        # Non-maximum suppression to handle overlapping boxes for the same template
+        rects, _ = cv2.groupRectangles(rects, 1, 0.2)
+        
+        for (x, y, w, h) in rects:
+            # Add semantic prefix for s3_asset_library resolution later
+            semantic_label = f"badge/{stem}"
+            results.append({
+                "type": "image",
+                "subtype": "badge",
+                "semantic_label": semantic_label,
+                "bbox": {"x": float(x), "y": float(y), "w": float(w), "h": float(h)},
+                "id": f"matched_{stem}_{x}_{y}"
+            })
+            
+    return results
 
 
 def _get_client() -> anthropic.Anthropic | None:
@@ -561,6 +632,10 @@ def _dedup_text_elements(elements: list) -> list:
 
 
 _TOP_HINTS = {"top_center", "top_left", "top_right"}
+# Hints that suggest a primary restaurant logo (not a side-bar badge/award circle)
+_PRIMARY_HINTS = _TOP_HINTS | {"bottom_center"}
+# Hints that strongly suggest an award badge or side-bar graphic (not the main logo)
+_BADGE_HINTS = {"middle_right", "middle_left", "center_right", "center_left"}
 
 
 def _enforce_single_logo(elements: list) -> list:
@@ -572,19 +647,24 @@ def _enforce_single_logo(elements: list) -> list:
     so the full visual logo region is preserved as one entity.
 
     Fragments within 2x the anchor logo's largest dimension are merged.
-    Truly distant logos (rare multi-logo menus) are reclassified as ornaments.
+    Truly distant logos (rare multi-logo menus) are reclassified as image/badge.
     """
     logos = [(i, e) for i, e in enumerate(elements) if e.get("type") == "logo"]
     if len(logos) <= 1:
         return elements
 
-    # Anchor = top-positioned or largest area
+    # Anchor priority:
+    #   2 = top position hint (restaurant logos most commonly at top)
+    #   1 = bottom_center (e.g. Chateau-style menus with logo at page foot)
+    #   0 = everything else (middle_right badges, "as seen on" panels etc.)
+    # Area is the tiebreaker so larger logos beat small fragments.
     def _logo_score(idx_el):
         _, el = idx_el
         hint = (el.get("position_hint") or "").lower()
         bd = el.get("bbox") or {}
         area = bd.get("w", 0) * bd.get("h", 0)
-        return (1 if hint in _TOP_HINTS else 0, area)
+        priority = 2 if hint in _TOP_HINTS else (1 if hint in _PRIMARY_HINTS else 0)
+        return (priority, area)
 
     anchor_idx, anchor_logo = sorted(logos, key=_logo_score, reverse=True)[0]
     anchor_bd = anchor_logo.get("bbox") or {}
@@ -636,13 +716,17 @@ def _enforce_single_logo(elements: list) -> list:
                 result.append(merged_logo)
                 logo_inserted = True
         else:
-            # Distant logo — reclassify as image/badge (separate graphical element to crop)
+            # Distant logo — reclassify as image/badge (separate graphical element to crop).
+            # Preserve semantic_label if present so S3 asset lookup can find clean PNG.
             bd = el.get("bbox") or {}
-            result.append({
+            badge_el: dict = {
                 "type": "image",
                 "subtype": "badge",
                 "bbox": bd,
-            })
+            }
+            if el.get("semantic_label"):
+                badge_el["semantic_label"] = el["semantic_label"]
+            result.append(badge_el)
     return result
 
 
@@ -696,79 +780,55 @@ You are a High-Precision Restaurant Menu Layout Extractor. Follow this EXACT pro
 You receive TWO images of the same menu at identical pixel dimensions:
 - IMAGE 1: Clean original — use to READ text accurately and measure positions
 - IMAGE 2: Same image with numbered Set-of-Marks boxes — use to match OCR block IDs [1, 2, 3] 
-  and Graphical Candidate IDs [G1, G2, G3].
+  and Graphical Candidate IDs [G1, G2, C1, C2].
+
+═══ S3 ASSET PALETTE (Use for semantic_label) ═══
+Use these canonical slugs to fetch clean PNGs from S3. Set semantic_label to one of these whenever you recognize the content:
+- Badges: badge/youtube, badge/food_network, badge/opentable_diners_choice, badge/hulu, badge/tripadvisor, badge/yelp, badge/michelin, badge/zagat, badge/best_of
+- Ornaments: ornament/floral_swash_centered, ornament/floral_swash_left, ornament/calligraphic_rule, ornament/diamond_rule, ornament/vine_separator, ornament/scroll_divider
+- Separators: separator/wavy_line, separator/double_line, separator/diamond_rule, separator/dotted_ornament
 
 ═══ PROCESS ORDER (follow sequentially) ═══
 
 STEP 1 — SKELETON SCAN (do before anything else):
-Visually scan IMAGE 1 for ALL section/category headers in ANY font style —
-cursive, script, handwritten, bold serif, or decorative.
-...
+Visually scan IMAGE 1 for ALL section/category headers and decorative dividers/separators.
+
 STEP 2 — LABEL OCR BLOCKS:
-For each numbered block [1, 2, 3] in the list: assign subtype, column (0=left, 1=right),
-font_family, and corrected_text if OCR garbled the text.
+For each numbered block [1, 2, 3] in IMAGE 2: assign subtype, column (0=left, 1=right), font_family.
+If a block is actually a fancy divider (like a dashed or wavy line), set subtype to "separator" and assign the correct semantic_label from the palette.
 
 STEP 3 — LABEL GRAPHICAL CANDIDATES:
-For each Magenta block [G1, G2, G3] in IMAGE 2: identify its type in graphic_labels.
-These are candidates detected by a vision pre-pass. Use graphic_labels to assign 
-subtype (badge, ornament, collage_box) and semantic_label.
+For each numbered box [G1, G2, C1, C2] in IMAGE 2: identify its type in graphic_labels.
+  - Magenta boxes (G1, G2...) are generic candidates.
+  - Cyan boxes (C1, C2...) are high-confidence template matches.
+Assign subtype (badge, ornament, collage_box) and semantic_label from the S3 palette.
+"As seen on" / "As featured in" panels MUST be labeled as collage_box.
+Circular award/brand badges (Food Network, Diners' Choice, TripAdvisor, etc.) MUST be labeled as badge with the correct semantic_label.
+YouTube/Yelp/Hulu icons MUST be labeled as badge with the correct semantic_label.
+Set semantic_label for EVERY recognized badge — do not leave it null if you can match it to the palette.
 
-STEP 4 — DECORATIVE ELEMENTS:
-For each section header from Step 1 that has NO corresponding numbered OCR block:
-  a) Find the OCR block immediately BELOW it in the same column from the provided list.
-  b) Set bbox bottom edge (y + h) = that block's y − 4px. Estimate height visually.
-  c) Measure x and width directly from IMAGE 1.
-  If no OCR block is below it in its column: estimate from IMAGE 1 visual position.
-Include ALL headers from Step 1 — completeness here is the #1 accuracy driver.
+STEP 4 — DECORATIVE ELEMENTS (Missed by SoM):
+For each section header or fancy divider from Step 1 that has NO numbered box in IMAGE 2:
+Draw a bbox and assign subtype (category_header or separator) and semantic_label.
 
 STEP 5 — LOGO BBOX:
-Draw ONE unified bbox covering the COMPLETE restaurant branding block:
-  - All name lines (including small "the", large name, location line)
-  - Decorative ornament lines (e.g. "——— SARASOTA ———")
-  - Any graphic element (emblem, crest, swash, circular frame behind text)
-  Add generous ~15px padding on all sides. Never split into parts.
-  The MAIN logo is the primary restaurant branding — usually at the top of the menu.
-  Secondary logos (footer variants, location badges) go in graphic_elements, NOT here.
+Draw ONE unified bbox covering ONLY the PRIMARY restaurant name/branding block.
+IMPORTANT: Do NOT include award circles, badge icons, or "As seen on" panels in logo_bbox — those are graphic_elements.
+The logo_bbox is solely for the restaurant's own name/wordmark/emblem.
 
-STEP 6 — GRAPHIC ELEMENTS (non-text graphical regions):
-CRITICAL: Scan IMAGE 1 specifically for graphical elements that look like badges, circles, 
-or bordered boxes. 
-
-RECOGNIZING BADGES & BOXES (Zero Tolerance for Missing):
-1. "As seen on:" panel (bottom left) — This is a bordered box with multiple small logos 
-   (Food Network, YouTube, Hulu). You MUST report the ENTIRE bordered box as one 
-   collage_box. Do NOT just label the text inside it.
-2. Circular Badges (right side) — Look for the large "food network" circle and the 
-   "Diners' Choice" circle. These are graphical badges. You MUST capture the entire 
-   circle as a badge, even if OCR found text inside it.
-3. Ornaments — Symmetrical calligraphic swashes below section headers.
-
-If a region contains BOTH text and a graphical container (like a circle or a box), 
-you MUST include it in graphic_labels (if it has a G# box) OR graphic_elements. 
-Failing to capture these containers makes the menu look empty and incomplete.
-
-BBOX RULES:
-- ALL coordinates in IMAGE 1 pixel space
-- Anchor decorative element bboxes to nearby OCR block y-coordinates for precision
-- font_family: "decorative-script" for cursive/calligraphy, "serif", "sans-serif", "display"
-- column: 0=left or single column, 1=right column
+STEP 6 — GRAPHIC ELEMENTS (Non-text graphical regions):
+Scan IMAGE 1 for any OTHER graphical elements (badges, circles, ornaments) NOT already labeled in graphic_labels.
+ZERO TOLERANCE for missing social icons (YouTube, Yelp) or circular badges (Food Network, Diners' Choice, OpenTable).
+Use semantic_label from the S3 palette for any recognized badge.
 """
 
 _HYBRID_TOOL_SCHEMA = {
     "name": "label_menu_layout",
-    "description": "Label OCR text blocks semantically and identify decorative elements OCR missed.",
+    "description": "Extract menu layout with semantic labels and S3 asset matching.",
     "input_schema": {
         "type": "object",
         "properties": {
-            "background_color": {"type": "string"},
-            "logo_bbox": {
-                "type": ["object", "null"],
-                "properties": {
-                    "x": {"type": "number"}, "y": {"type": "number"},
-                    "w": {"type": "number"}, "h": {"type": "number"},
-                },
-                "required": ["x", "y", "w", "h"],
-            },
+            "background_color": {"type": "string", "pattern": "^#[0-9a-fA-F]{6}$"},
             "ocr_labels": {
                 "type": "array",
                 "items": {
@@ -777,121 +837,33 @@ _HYBRID_TOOL_SCHEMA = {
                         "id": {"type": "integer"},
                         "subtype": {
                             "type": "string",
-                            "enum": ["restaurant_name", "category_header", "item_name",
-                                     "item_description", "item_price", "tagline",
-                                     "address", "phone", "other_text"],
+                            "enum": [
+                                "restaurant_name", "category_header", "item_name",
+                                "item_description", "item_price", "tagline",
+                                "address", "phone", "other_text", "separator"
+                            ],
                         },
-                        "column": {"type": "integer", "enum": [0, 1]},
                         "font_family": {
                             "type": "string",
-                            "enum": ["sans-serif", "serif", "decorative-script", "display"],
+                            "enum": ["sans-serif", "serif", "decorative-script", "display", "monospace"],
                         },
-                        "corrected_text": {
-                            "type": ["string", "null"],
-                            "description": "Corrected reading if OCR misread the text (e.g. decorative/cursive font). null if OCR text is correct.",
-                        },
+                        "corrected_text": {"type": ["string", "null"]},
+                        "column": {"type": "integer", "enum": [0, 1]},
+                        "semantic_label": {"type": ["string", "null"]},
                     },
-                    "required": ["id", "subtype", "column", "font_family"],
+                    "required": ["id", "subtype"],
                 },
             },
             "decorative_elements": {
                 "type": "array",
+                "description": "Missed headers or separators.",
                 "items": {
                     "type": "object",
                     "properties": {
+                        "subtype": {"type": "string", "enum": ["category_header", "separator"]},
                         "content": {"type": "string"},
-                        "subtype": {
-                            "type": "string",
-                            "enum": ["restaurant_name", "category_header", "item_name",
-                                     "item_description", "item_price", "tagline",
-                                     "address", "phone", "other_text"],
-                        },
-                        "font_family": {
-                            "type": "string",
-                            "enum": ["sans-serif", "serif", "decorative-script", "display"],
-                        },
-                        "bbox": {
-                            "type": "object",
-                            "properties": {
-                                "x": {"type": "number"}, "y": {"type": "number"},
-                                "w": {"type": "number"}, "h": {"type": "number"},
-                            },
-                            "required": ["x", "y", "w", "h"],
-                        },
+                        "semantic_label": {"type": ["string", "null"]},
                         "column": {"type": "integer", "enum": [0, 1]},
-                        "text_align": {"type": "string", "enum": ["left", "center", "right"]},
-                    },
-                    "required": ["content", "subtype", "font_family", "bbox", "column"],
-                },
-            },
-            "menu_data": {
-                "type": "object",
-                "properties": {
-                    "restaurant_name": {
-                        "type": "string",
-                        "description": "The name of the restaurant. If not explicitly in OCR, extract from visual branding/logo."
-                    },
-                    "tagline": {"type": ["string", "null"]},
-                    "address": {"type": ["string", "null"]},
-                    "phone": {"type": ["string", "null"]},
-                    "num_columns": {"type": "integer", "enum": [1, 2]},
-                    "categories": {
-                        "type": "array",
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "name": {"type": "string"},
-                                "column": {"type": "integer", "enum": [0, 1]},
-                                "items": {
-                                    "type": "array",
-                                    "items": {
-                                        "type": "object",
-                                        "properties": {
-                                            "name": {"type": "string"},
-                                            "description": {"type": ["string", "null"]},
-                                            "price": {"type": ["string", "null"]},
-                                        },
-                                        "required": ["name", "description", "price"],
-                                    },
-                                },
-                            },
-                            "required": ["name", "column", "items"],
-                        },
-                    },
-                },
-                "required": ["restaurant_name", "tagline", "address", "phone",
-                             "num_columns", "categories"],
-            },
-            "graphic_elements": {
-                "type": "array",
-                "description": (
-                    "Non-text graphical regions to crop and embed as images. "
-                    "Do NOT include the main restaurant logo (use logo_bbox for that). "
-                    "Types: ornament (swash below section header), badge (brand circle/icon), "
-                    "collage_box (bordered multi-logo panel like 'As seen on' box)."
-                ),
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "subtype": {
-                            "type": "string",
-                            "enum": ["ornament", "badge", "collage_box"],
-                        },
-                        "semantic_label": {
-                            "type": ["string", "null"],
-                            "description": (
-                                "Canonical slug identifying the asset for S3 library lookup. "
-                                "Use EXACTLY one of these slugs when you recognise the element, "
-                                "otherwise set null:\n"
-                                "Badges: badge/food_network | badge/opentable_diners_choice | "
-                                "badge/youtube | badge/hulu | badge/tripadvisor | badge/yelp | "
-                                "badge/michelin | badge/zagat | badge/best_of\n"
-                                "Ornaments: ornament/floral_swash_centered | ornament/floral_swash_left | "
-                                "ornament/calligraphic_rule | ornament/diamond_rule | "
-                                "ornament/vine_separator | ornament/scroll_divider\n"
-                                "Separators: separator/wavy_line | separator/double_line | separator/dotted_ornament"
-                            ),
-                        },
                         "bbox": {
                             "type": "object",
                             "properties": {
@@ -904,24 +876,71 @@ _HYBRID_TOOL_SCHEMA = {
                     "required": ["subtype", "bbox"],
                 },
             },
+            "logo_bbox": {
+                "type": ["object", "null"],
+                "description": "Bounding box for the PRIMARY restaurant name/wordmark/emblem ONLY. Do NOT include award badges, brand circles (Food Network, OpenTable), or 'As seen on' panels here — those go in graphic_labels or graphic_elements.",
+                "properties": {
+                    "x": {"type": "number"}, "y": {"type": "number"},
+                    "w": {"type": "number"}, "h": {"type": "number"},
+                },
+                "required": ["x", "y", "w", "h"],
+            },
             "graphic_labels": {
                 "type": "array",
-                "description": "Label the detected graphical candidate boxes (G1, G2, etc.) from IMAGE 2.",
+                "description": "Label every G# and C# candidate box. Use the EXACT id string shown in IMAGE 2 (e.g. 'G1', 'C3'). Set semantic_label from the S3 palette for any recognized badge/brand icon.",
                 "items": {
                     "type": "object",
                     "properties": {
-                        "id": {"type": "string", "description": "The G# ID from IMAGE 2 (e.g. G1, G2)."},
-                        "subtype": {
-                            "type": "string",
-                            "enum": ["ornament", "badge", "collage_box"],
-                        },
+                        "id": {"type": "string", "description": "Exact label shown on box in IMAGE 2, e.g. 'G1', 'C2'"},
+                        "subtype": {"type": "string", "enum": ["ornament", "badge", "collage_box"]},
                         "semantic_label": {
                             "type": ["string", "null"],
-                            "description": "Canonical slug (e.g. badge/food_network, badge/opentable_diners_choice).",
+                            "description": "S3 slug if recognized (e.g. 'badge/food_network'), else null",
                         },
                     },
-                    "required": ["id", "subtype"],
+                    "required": ["id", "subtype", "semantic_label"],
                 },
+            },
+            "graphic_elements": {
+                "type": "array",
+                "description": "Additional graphical regions visible in IMAGE 1 that have NO G#/C# box. Use for badges, circles, ornament panels not already in graphic_labels.",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "subtype": {"type": "string", "enum": ["ornament", "badge", "collage_box"]},
+                        "semantic_label": {
+                            "type": ["string", "null"],
+                            "description": "S3 slug if recognized (e.g. 'badge/food_network'), else null",
+                        },
+                        "bbox": {
+                            "type": "object",
+                            "properties": {
+                                "x": {"type": "number"}, "y": {"type": "number"},
+                                "w": {"type": "number"}, "h": {"type": "number"},
+                            },
+                            "required": ["x", "y", "w", "h"],
+                        },
+                    },
+                    "required": ["subtype", "semantic_label", "bbox"],
+                },
+            },
+            "menu_data": {
+                "type": "object",
+                "properties": {
+                    "restaurant_name": {"type": "string"},
+                    "categories": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "name": {"type": "string"},
+                                "column": {"type": "integer"},
+                                "items": {"type": "array", "items": {"type": "object"}},
+                            },
+                        },
+                    },
+                },
+                "required": ["restaurant_name", "categories"],
             },
         },
         "required": ["background_color", "ocr_labels", "decorative_elements", "menu_data", "graphic_labels"],
@@ -1079,96 +1098,129 @@ _SOM_PALETTE = [
 ]
 
 
+def _detect_templates(gray_img: np.ndarray) -> list[dict]:
+    """
+    Scans the grayscale image for loaded logo templates.
+    Uses multi-scale template matching to handle varying logo sizes.
+    """
+    if not _CV2_AVAILABLE or not _LOGO_TEMPLATES:
+        return []
+
+    candidates = []
+    # Multi-scale matching: broader range to catch tiny icons and large badges.
+    # From 0.2x to 2.0x of template size.
+    scales = [0.2, 0.3, 0.4, 0.5, 0.75, 1.0, 1.25, 1.5, 2.0]
+    
+    for name, tpl in _LOGO_TEMPLATES.items():
+        th, tw = tpl.shape
+        for scale in scales:
+            rw, rh = int(tw * scale), int(th * scale)
+            if rw < 15 or rh < 15: continue
+            if rw > gray_img.shape[1] or rh > gray_img.shape[0]: continue
+            
+            resized_tpl = cv2.resize(tpl, (rw, rh), interpolation=cv2.INTER_AREA)
+            res = cv2.matchTemplate(gray_img, resized_tpl, cv2.TM_CCOEFF_NORMED)
+            threshold = 0.72 # Relaxed for robustness against JPEG noise
+            loc = np.where(res >= threshold)
+            
+            for pt in zip(*loc[::-1]): # x, y
+                score = res[pt[1], pt[0]]
+                candidates.append({
+                    "bbox": (int(pt[0]), int(pt[1]), int(pt[0] + rw), int(pt[1] + rh)),
+                    "score": float(score),
+                    "type": "candidate_template",
+                    "label": f"badge/{name}"
+                })
+    
+    if not candidates:
+        return []
+    
+    # NMS for templates
+    candidates.sort(key=lambda x: x["score"], reverse=True)
+    final_candidates = []
+    for cand in candidates:
+        overlap = False
+        for f_cand in final_candidates:
+            if cand["label"] != f_cand["label"]: continue
+            # IoU check
+            a, b = cand["bbox"], f_cand["bbox"]
+            ix1, iy1 = max(a[0], b[0]), max(a[1], b[1])
+            ix2, iy2 = min(a[2], b[2]), min(a[3], b[3])
+            iw, ih = max(0, ix2 - ix1), max(0, iy2 - iy1)
+            inter = iw * ih
+            area_a = (a[2]-a[0]) * (a[3]-a[1])
+            area_b = (b[2]-b[0]) * (b[3]-b[1])
+            iou = inter / float(area_a + area_b - inter)
+            if iou > 0.3:
+                overlap = True
+                break
+        if not overlap:
+            final_candidates.append(cand)
+            
+    return final_candidates
+
+
 def detect_graphical_candidates(img: Image.Image) -> list[dict]:
     """
     Advanced OpenCV pre-pass for circular badges and bordered boxes.
-    Uses HoughCircles for robustness on coins/circles and adaptive thresholding for boxes.
+    Uses multi-scale template matching + HoughCircles + Contours.
     """
     if not _CV2_AVAILABLE:
         return []
 
-    arr = np.array(img.convert("RGB"))
-    gray = cv2.cvtColor(arr, cv2.COLOR_RGB2GRAY)
-    h, w = gray.shape
+    # 1. Template Match (Cyan)
+    candidates = match_badges(img)
+    for c in candidates:
+        c["type"] = "candidate_template"
+        c["label"] = c.get("semantic_label", "template")
+        # SoM expects list [x1, y1, x2, y2]
+        b = c["bbox"]
+        c["bbox"] = [b["x"], b["y"], b["x"] + b["w"], b["y"] + b["h"]]
 
-    candidates = []
+    # 2. Graphic Blobs (Magenta)
+    from separator import detect_graphic_blobs
+    blobs = detect_graphic_blobs(img)
+    for b in blobs:
+        bbox = b["bbox"]
+        candidates.append({
+            "bbox": [bbox["x"], bbox["y"], bbox["x"] + bbox["w"], bbox["y"] + bbox["h"]],
+            "type": "candidate_box" if bbox["w"] > 100 and bbox["h"] > 100 else "candidate_badge"
+        })
 
-    # --- 1. Circle Detection (Hough Circles) ---
-    # Good for 'Food Network' / 'Diners Choice' circles
-    blurred_circle = cv2.medianBlur(gray, 5)
-    circles = cv2.HoughCircles(
-        blurred_circle, cv2.HOUGH_GRADIENT, dp=1, minDist=100,
-        param1=50, param2=30, minRadius=40, maxRadius=300
-    )
-    
-    if circles is not None:
-        circles = np.uint16(np.around(circles))
-        for i in circles[0, :]:
-            cx, cy, r = i
-            # Pad radius slightly for bbox
-            pad = 10
-            x1, y1 = max(0, int(cx - r - pad)), max(0, int(cy - r - pad))
-            x2, y2 = min(w, int(cx + r + pad)), min(h, int(cy + r + pad))
-            candidates.append({
-                "bbox": [float(x1), float(y1), float(x2), float(y2)],
-                "type": "candidate_badge"
-            })
-
-    # --- 2. Bordered Box Detection (Contours) ---
-    # Good for 'As seen on' panels
-    thresh = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
-                                 cv2.THRESH_BINARY_INV, 15, 4)
-    
-    # Use morphological closing to bridge thin borders
-    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (11, 11))
-    closed = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel)
-    
-    contours, _ = cv2.findContours(closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    
-    for cnt in contours:
-        area = cv2.contourArea(cnt)
-        if area < 5000 or area > (h * w * 0.3): # Only look for substantial elements
-            continue
-            
-        x, y, cw, ch = cv2.boundingRect(cnt)
-        aspect_ratio = float(cw) / ch
-        
-        # Check for circularity factor as a backup for circles Hough missed
-        peri = cv2.arcLength(cnt, True)
-        circularity = 4 * np.pi * area / (peri * peri) if peri > 0 else 0
-        
-        # A solid rectangle or a circular shape
-        rect = cv2.minAreaRect(cnt)
-        box_area = rect[1][0] * rect[1][1]
-        extent = area / box_area if box_area > 0 else 0
-        
-        if extent > 0.7 or (circularity > 0.6 and 0.5 < aspect_ratio < 1.5):
-            candidates.append({
-                "bbox": [float(x), float(y), float(x + cw), float(y + ch)],
-                "type": "candidate_box" if extent > 0.7 else "candidate_badge"
-            })
-
-    # --- 3. Non-Max Suppression (Cleanup Overlaps) ---
+    # --- Non-Max Suppression (Cleanup Overlaps) ---
     if not candidates:
         return []
         
+    # Sort by area descending
     candidates.sort(key=lambda x: (x["bbox"][2]-x["bbox"][0]) * (x["bbox"][3]-x["bbox"][1]), reverse=True)
     final = []
     for cand in candidates:
+        # Safety: validate bbox values are valid before IoU
+        c_x1, c_y1, c_x2, c_y2 = cand["bbox"]
+        if c_x2 <= c_x1 or c_y2 <= c_y1: continue
+
         is_covered = False
-        cb = {"x": cand["bbox"][0], "y": cand["bbox"][1], 
-              "w": cand["bbox"][2]-cand["bbox"][0], "h": cand["bbox"][3]-cand["bbox"][1]}
+        cb = {"x": c_x1, "y": c_y1, "w": c_x2 - c_x1, "h": c_y2 - c_y1}
         for f in final:
-            fb = {"x": f["bbox"][0], "y": f["bbox"][1], 
-                  "w": f["bbox"][2]-f["bbox"][0], "h": f["bbox"][3]-f["bbox"][1]}
-            # If significant overlap, keep the larger one
-            if _bbox_iou(cb, fb) > 0.4:
-                is_covered = True
-                break
+            f_x1, f_y1, f_x2, f_y2 = f["bbox"]
+            fb = {"x": f_x1, "y": f_y1, "w": f_x2 - f_x1, "h": f_y2 - f_y1}
+            
+            iou = _bbox_iou(cb, fb)
+            if iou > 0.5:
+                # Always prefer template matches
+                if f.get("type") == "candidate_template":
+                    is_covered = True
+                    break
+                if cand.get("type") == "candidate_template":
+                    continue # Will likely replace or just let through if different
+                else:
+                    is_covered = True
+                    break
         if not is_covered:
             final.append(cand)
             
-    return final
+    # Hard limit: keep top 25 most confident/largest candidates to avoid overloading Claude
+    return final[:25]
 
 
 def _draw_som_annotations(img: Image.Image, blocks: list, graphic_candidates: list = None) -> Image.Image:
@@ -1193,22 +1245,48 @@ def _draw_som_annotations(img: Image.Image, blocks: list, graphic_candidates: li
         draw.rectangle([lbl_x, lbl_y, lbl_x + lbl_w, lbl_y + lbl_h], fill=(r, g, b, 220))
         draw.text((lbl_x + 3, lbl_y + 2), lbl, fill=(255, 255, 255, 255))
         
-    # 2. Draw Graphic Candidates (Magenta)
+    # 2. Draw Graphic Candidates (Magenta for unknown, Cyan for template matches)
     if graphic_candidates:
-        magenta = (255, 0, 255) # Magenta for graphic candidates
+        magenta = (255, 0, 255) # Magenta for generic candidates
+        cyan = (0, 255, 255)    # Cyan for template-matched graphics
+        
         for i, cand in enumerate(graphic_candidates):
             x1, y1, x2, y2 = cand["bbox"]
+            is_template = cand.get("type") == "candidate_template"
+            color = cyan if is_template else magenta
+            
             # Outline only for graphics, no fill to avoid obscuring details
-            draw.rectangle([x1, y1, x2, y2], outline=(*magenta, 255), width=4)
-            lbl = f"G{i + 1}"
+            draw.rectangle([x1, y1, x2, y2], outline=(*color, 255), width=4)
+            
+            lbl = f"C{i + 1}" if is_template else f"G{i + 1}"
             lbl_w, lbl_h = len(lbl) * 12 + 8, 22
             lbl_x = x1
             lbl_y = max(0, y1 - lbl_h - 2)
-            draw.rectangle([lbl_x, lbl_y, lbl_x + lbl_w, lbl_y + lbl_h], fill=(*magenta, 255))
+            draw.rectangle([lbl_x, lbl_y, lbl_x + lbl_w, lbl_y + lbl_h], fill=(*color, 255))
             draw.text((lbl_x + 4, lbl_y + 3), lbl, fill=(255, 255, 255, 255))
 
     result = Image.alpha_composite(base, overlay)
     return result.convert("RGB")
+
+
+def _generate_tiles(w: int, h: int, tile_size: int = 1500, overlap: int = 250) -> list[tuple[int, int, int, int]]:
+    """Generates bounding boxes for overlapping high-resolution tiles."""
+    tiles = []
+    y = 0
+    while y < h:
+        x = 0
+        y_end = min(y + tile_size, h)
+        y_start = max(0, y_end - tile_size)
+        while x < w:
+            x_end = min(x + tile_size, w)
+            x_start = max(0, x_end - tile_size)
+            
+            tiles.append((x_start, y_start, x_end, y_end))
+            if x_end == w: break
+            x += (tile_size - overlap)
+        if y_end == h: break
+        y += (tile_size - overlap)
+    return tiles
 
 
 def extract_layout_surya_som(img: Image.Image) -> dict | None:
@@ -1255,19 +1333,16 @@ def extract_layout_surya_som(img: Image.Image) -> dict | None:
         scale_x = orig_w / new_w
         scale_y = orig_h / new_h
 
-    # --- Systematic Quadrant Tiling (SAHI-style) ---
-    # Divide original high-res image into 4 overlapping quadrants for clarity
+    # --- Dynamic Slicing (SAHI-lite) ---
+    # Divide high-resolution image into overlapping tiles to ensure small logos are visible.
     quadrants = []
-    qw, qh = orig_w // 2, orig_h // 2
-    overlap = 150 # 150px overlap to ensure logos aren't cut off
+    rects = _generate_tiles(orig_w, orig_h)
     
-    rects = [
-        (0, 0, qw + overlap, qh + overlap),             # Top Left
-        (qw - overlap, 0, orig_w, qh + overlap),         # Top Right
-        (0, qh - overlap, qw + overlap, orig_h),         # Bottom Left
-        (qw - overlap, qh - overlap, orig_w, orig_h)     # Bottom Right
-    ]
-    
+    # Safety limit: never send more than 18 tiles (Claude limit is 20)
+    if len(rects) > 18:
+        # If too many tiles, fallback to larger tiles to reduce count
+        rects = _generate_tiles(orig_w, orig_h, tile_size=orig_w//2 + 200, overlap=200)
+
     for i, (x1, y1, x2, y2) in enumerate(rects):
         q_img = img.crop((x1, y1, x2, y2))
         q_buf = io.BytesIO()
@@ -1278,15 +1353,91 @@ def extract_layout_surya_som(img: Image.Image) -> dict | None:
             "bbox": (x1, y1, x2, y2)
         })
 
+    # Block list for Claude — absolute pixel coords in Claude's image space (sw×sh)
+    # so Claude can anchor decorative element bboxes precisely relative to OCR blocks.
+    lines = []
+    for i, b in enumerate(surya_blocks):
+        x1, y1, x2, y2 = b["bbox"]
+        # Convert from original (upscaled) image coords → Claude's send_img coords
+        cx1 = x1 / scale_x if scale_x != 1.0 else x1
+        cy1 = y1 / scale_y if scale_y != 1.0 else y1
+        cw  = (x2 - x1) / scale_x if scale_x != 1.0 else (x2 - x1)
+        ch  = (y2 - y1) / scale_y if scale_y != 1.0 else (y2 - y1)
+        text = b["text"] if len(b["text"]) <= 80 else b["text"][:77] + "..."
+        lines.append(
+            f"[{i + 1}] \"{text}\" — x={cx1:.0f} y={cy1:.0f} w={cw:.0f} h={ch:.0f}"
+        )
+    block_list = "\n".join(lines)
+    
+    # Add graphical candidate list with shape hints so Claude knows what type of element to expect
+    _SHAPE_HINT = {
+        "candidate_badge":    "CIRCLE/OVAL shape → must be badge or null, NEVER ornament",
+        "candidate_box":      "RECTANGLE/BOX shape → collage_box or null",
+        "candidate_template": "TEMPLATE MATCH",
+    }
+    g_lines = []
+    for i, g in enumerate(graphic_candidates):
+        x1, y1, x2, y2 = g["bbox"]
+        cx1, cy1 = x1 / scale_x, y1 / scale_y
+        cw, ch = (x2 - x1) / scale_x, (y2 - y1) / scale_y
+        g_type = g["type"]
+        if g_type == "candidate_template":
+             g_lines.append(f"[C{i + 1}] (Cyan) TEMPLATE MATCH: {g['label']} — x={cx1:.0f} y={cy1:.0f} w={cw:.0f} h={ch:.0f}")
+        else:
+             shape_hint = _SHAPE_HINT.get(g_type, g_type)
+             g_lines.append(f"[G{i + 1}] (Magenta) {shape_hint} — x={cx1:.0f} y={cy1:.0f} w={cw:.0f} h={ch:.0f}")
+    graphic_list = "\n".join(g_lines)
+
+    sw, sh = send_img.size
+    user_msg = (
+        f"Both images are {sw}×{sh}px. All bbox values must be in this pixel space.\n\n"
+        f"I am providing {len(quadrants)} high-resolution overlapping tiles to ensure small logos are visible.\n\n"
+        "Follow the 6-step process from the system prompt exactly.\n\n"
+        "═══ STEP 1 — SKELETON SCAN ═══\n"
+        "Scan the High-Resolution Tiles now. Identify every section/category header.\n\n"
+        "═══ STEP 2 — OCR BLOCKS ═══\n"
+        f"Surya OCR extracted {len(surya_blocks)} blocks:\n"
+        f"{block_list}\n\n"
+        "═══ STEP 3 — GRAPHICAL CANDIDATES ═══\n"
+        "Pre-pass detected potential graphical regions (Magenta G# and Cyan C# boxes):\n"
+        "RULES:\n"
+        "- CIRCLE/OVAL shapes → subtype MUST be 'badge', NEVER 'ornament'. Set semantic_label from palette if you recognize the brand, else null.\n"
+        "- RECTANGLE/BOX shapes → subtype 'collage_box' ONLY if it literally contains multiple logos. Otherwise null.\n"
+        "- TEMPLATE MATCH (Cyan) → use the matched label as semantic_label.\n"
+        "- If you do NOT recognize what is shown at a G# location: set semantic_label to null.\n"
+        "- Do NOT assign ornament/floral_swash to shapes that are circles or large boxes.\n"
+        f"{graphic_list or '(none)'}\n"
+        "Identify these in the graphic_labels tool field.\n\n"
+        "═══ STEP 4 — DECORATIVE ELEMENTS ═══\n"
+        "SECTION HEADERS: For every cursive/script header from Step 1 with no numbered OCR block.\n\n"
+        "═══ STEP 5 — LOGO BBOX ═══\n"
+        "Draw ONE bbox tightly around the PRIMARY restaurant branding in IMAGE 1.\n\n"
+        "═══ STEP 6 — GRAPHIC ELEMENTS ═══\n"
+        "Scan the Tiles for ANY OTHER non-text graphical regions not already labeled.\n"
+        "CRITICAL — use exact semantic_label slugs:\n"
+        "  Food Network → badge/food_network\n"
+        "  OpenTable / Diners' Choice → badge/opentable_diners_choice\n"
+        "  YouTube → badge/youtube   Hulu → badge/hulu\n"
+        "  TripAdvisor → badge/tripadvisor   Yelp → badge/yelp\n"
+    )
+
     # Encode annotated image (IMAGE 2 — for OCR block spatial reference)
-...
+    buf = io.BytesIO()
+    send_img.convert("RGB").save(buf, format="JPEG", quality=85)
+    annotated_b64 = base64.standard_b64encode(buf.getvalue()).decode()
+
+    # Encode clean image (IMAGE 1 — for accurate text reading and decorative element location)
+    clean_buf = io.BytesIO()
+    clean_send.convert("RGB").save(clean_buf, format="JPEG", quality=85)
+    clean_b64 = base64.standard_b64encode(clean_buf.getvalue()).decode()
+
     # Build the multi-image message for Claude
     content_blocks = [
-        {"type": "text", "text": "I am providing 4 high-resolution overlapping quadrants of the menu to ensure small logos are visible."},
+        {"type": "text", "text": f"I am providing {len(quadrants)} high-resolution overlapping tiles of the menu to ensure small logos are visible."},
     ]
     
     for q in quadrants:
-        content_blocks.append({"type": "text", "text": f"Quadrant {q['id']}:"})
+        content_blocks.append({"type": "text", "text": f"Tile {q['id']}:"})
         content_blocks.append({"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": q["b64"]}})
 
     content_blocks.extend([
@@ -1294,10 +1445,8 @@ def extract_layout_surya_som(img: Image.Image) -> dict | None:
         {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": clean_b64}},
         {"type": "text", "text": "IMAGE 2 — Annotated (spatial reference):"},
         {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": annotated_b64}},
+        {"type": "text", "text": user_msg}
     ])
-
-    # ... rest of message ...
-    content_blocks.append({"type": "text", "text": user_msg})
 
     try:
         response = client.messages.create(
@@ -1340,9 +1489,12 @@ def extract_layout_surya_som(img: Image.Image) -> dict | None:
         elem_h = max(1.0, y2 - y1)
         # Use Claude's corrected reading if OCR got the text wrong (e.g. decorative fonts)
         content = lbl.get("corrected_text") or b["text"]
-        elements.append({
-            "type": "text",
-            "subtype": lbl.get("subtype", "other_text"),
+        subtype = lbl.get("subtype", "other_text")
+        el_type = "separator" if subtype == "separator" else "text"
+        
+        el_dict = {
+            "type": el_type,
+            "subtype": subtype,
             "content": content,
             "bbox": {"x": x1, "y": y1, "w": max(1.0, x2 - x1), "h": elem_h},
             "style": {
@@ -1354,7 +1506,10 @@ def extract_layout_surya_som(img: Image.Image) -> dict | None:
                 "text_align": "left",
             },
             "column": int(lbl.get("column", 0)),
-        })
+        }
+        if lbl.get("semantic_label"):
+            el_dict["semantic_label"] = lbl.get("semantic_label")
+        elements.append(el_dict)
 
     # Decorative elements use Claude's approximate bboxes — fine for section headers
     for dec in data.get("decorative_elements", []):
@@ -1365,9 +1520,12 @@ def extract_layout_surya_som(img: Image.Image) -> dict | None:
                 "w": bd.get("w", 0) * scale_x,  "h": bd.get("h", 0) * scale_y,
             }
         elem_h = max(1.0, float(bd.get("h", 30)))
-        elements.append({
-            "type": "text",
-            "subtype": dec.get("subtype", "category_header"),
+        subtype = dec.get("subtype", "category_header")
+        el_type = "separator" if subtype == "separator" else "text"
+        
+        el_dict = {
+            "type": el_type,
+            "subtype": subtype,
             "content": dec.get("content", ""),
             "bbox": {"x": float(bd.get("x", 0)), "y": float(bd.get("y", 0)),
                      "w": max(1.0, float(bd.get("w", 100))), "h": elem_h},
@@ -1380,7 +1538,10 @@ def extract_layout_surya_som(img: Image.Image) -> dict | None:
                 "text_align": dec.get("text_align", "center"),
             },
             "column": int(dec.get("column", 0)),
-        })
+        }
+        if dec.get("semantic_label"):
+            el_dict["semantic_label"] = dec.get("semantic_label")
+        elements.append(el_dict)
 
     # Logo: Claude's approximate bbox, exact crop happens later in pipeline
     lb = data.get("logo_bbox")
@@ -1395,16 +1556,28 @@ def extract_layout_surya_som(img: Image.Image) -> dict | None:
         _px = "left" if _lb_cx < orig_w * 0.35 else ("right" if _lb_cx > orig_w * 0.65 else "center")
         elements.append({"type": "logo", "bbox": lb, "position_hint": f"{_py}_{_px}"})
 
-    # Process graphic_labels (G# mappings)
+    # Process graphic_labels (G# and C# mappings)
     graphic_label_map = {lbl.get("id"): lbl for lbl in data.get("graphic_labels", []) if lbl.get("id")}
     for i, g in enumerate(graphic_candidates):
-        lbl = graphic_label_map.get(f"G{i+1}")
+        is_template = g.get("type") == "candidate_template"
+        is_circle = g.get("type") == "candidate_badge"  # HoughCircles detection = always round
+        prefix = "C" if is_template else "G"
+        lbl = graphic_label_map.get(f"{prefix}{i+1}")
         if lbl:
+            sl = lbl.get("semantic_label") or (g.get("label") if is_template else None)
+            # Circle shapes are never ornamental swashes — strip that label to force pixel crop.
+            # Ornaments are calligraphic curves; circles are always badge/award icons.
+            if is_circle and sl and sl.startswith("ornament/"):
+                sl = None
+            # Don't label circles as collage_box either — only rectangular bordered panels are.
+            subtype = lbl.get("subtype", "badge" if is_circle else "ornament")
+            if is_circle and subtype == "collage_box":
+                subtype = "badge"
             x1, y1, x2, y2 = g["bbox"]
             elements.append({
                 "type": "image",
-                "subtype": lbl.get("subtype", "ornament"),
-                "semantic_label": lbl.get("semantic_label"),
+                "subtype": subtype,
+                "semantic_label": sl,
                 "bbox": {
                     "x": float(x1), "y": float(y1),
                     "w": float(x2 - x1), "h": float(y2 - y1),
@@ -1433,7 +1606,7 @@ def extract_layout_surya_som(img: Image.Image) -> dict | None:
 
     print(f"[surya_som] built {len(elements)} elements "
           f"(ocr={len(surya_blocks)}, decorative={len(data.get('decorative_elements', []))}, "
-          f"graphics={len(data.get('graphic_elements', []))})")
+          f"labels={len(data.get('graphic_labels', []))}, graphics={len(data.get('graphic_elements', []))})")
     
     # --- Post-processing (The 'Precision Engine' cleanup) ---
     # 1. Deduplicate text (Word-match merge Surya vs Claude's hallucinated decorative copies)
@@ -1442,14 +1615,21 @@ def extract_layout_surya_som(img: Image.Image) -> dict | None:
     # 2. Snap decorative headers to content below and center in column
     elements = _snap_decorative_headers(elements, orig_w=orig_w)
 
-    # 3. Mask any text/separators inside the logo area
+    # 3. Enforce single primary logo — reclassify distant graphic logos as image/badge so they
+    #    get individually pixel-cropped instead of all sharing the restaurant logo image_data.
+    elements = _enforce_single_logo(elements)
+
+    # 4. Mask any text/separators inside the (now single) logo area
     elements = _mask_logo_elements(elements)
 
-    # 4. Verification pass — second Claude call with overlay image to catch missed headers
+    # 5. Verification pass — second Claude call with overlay image to catch missed headers/badges
     elements = _verification_pass(img, elements, orig_w, orig_h)
 
-    # 5. Re-snap after any newly added elements from verification pass
+    # 6. Re-snap after any newly added elements from verification pass
     elements = _snap_decorative_headers(elements, orig_w=orig_w)
+
+    # 7. Re-enforce single logo after verification (verification may add graphic elements)
+    elements = _enforce_single_logo(elements)
 
     return {
         "elements": elements,
@@ -1699,24 +1879,17 @@ def _verification_pass(
     canvas_h: int,
 ) -> list:
     """
-    Second Claude call: send the clean image + an overlay of already-extracted elements.
-    Claude spots content visible in the image but NOT covered by any extraction box.
-    Missing elements are appended to the list and returned.
-
-    Focused on section/category headers — the most critical miss type.
+    Second Claude call: identifies elements VISIBLE in IMAGE 1 but NOT covered by boxes in IMAGE 2.
+    Supports text, images (badges/logos), and separators (dividers).
     """
     client = _get_client()
     if client is None:
         return elements
 
-    # Build overlay image showing what we already extracted
     overlay_img = _render_extraction_overlay(img, elements)
-
-    # Resize both to fit within 1400px
     max_dim = 1400
     scale = min(1.0, max_dim / max(img.width, img.height))
-    send_w = max(1, int(img.width * scale))
-    send_h = max(1, int(img.height * scale))
+    send_w, send_h = max(1, int(img.width * scale)), max(1, int(img.height * scale))
     clean_resized = img.resize((send_w, send_h), Image.LANCZOS)
     overlay_resized = overlay_img.resize((send_w, send_h), Image.LANCZOS)
 
@@ -1728,38 +1901,19 @@ def _verification_pass(
     clean_b64 = _enc(clean_resized)
     overlay_b64 = _enc(overlay_resized)
 
-    # Summarise already-extracted text for reference
-    extracted_texts = sorted(
-        {el.get("content", "").strip() for el in elements if el.get("type") == "text" and el.get("content")},
-    )
-    text_list = "\n".join(f"  • {t}" for t in extracted_texts[:80]) or "  (none)"
-
     verify_prompt = (
-        f"These two images are {send_w}×{send_h}px.\n"
-        "IMAGE 1 is the clean original menu.\n"
-        "IMAGE 2 is the same image with COLORED BOXES showing already-extracted elements "
-        "(green = section headers, blue = text, red = logo, orange = separators).\n\n"
-        "TASK: Compare IMAGE 1 vs IMAGE 2 carefully.\n"
-        "Find ANY section/category headers or important structural text that is VISIBLE in "
-        "IMAGE 1 but has NO green or blue box covering it in IMAGE 2.\n\n"
-        "Already extracted text (do NOT re-add these):\n"
-        f"{text_list}\n\n"
-        "Focus especially on:\n"
-        "1. Cursive/italic headers: 'Course One', 'Breakfast', 'Lunch', 'Starters', "
-        "'Broths & Greens', 'Main Dishes', 'Salads', 'For the Table', 'Wines by the glass', etc.\n"
-        "2. The FIRST item in each column (bold item name at the top of each section) — "
-        "these are commonly missed when they sit close to a cursive header.\n"
-        "3. Price numbers in ANY tabular section (Add On, Sides, drinks table). "
-        "For each ROW in a price table: the item name AND the price number must BOTH have boxes. "
-        "If a price number (e.g. 3, 4, 7, 8, 4.50) has NO box, it is missing.\n"
-        "4. Any text visible in IMAGE 1 that has no box at all in IMAGE 2.\n\n"
-        f"Return ONLY a JSON array (use image coords 0–{send_w} x, 0–{send_h} y):\n"
-        "[\n"
-        "  {\"content\": \"Course One\", \"subtype\": \"category_header\", "
-        "\"font_family\": \"decorative-script\", \"column\": 0, "
-        "\"bbox\": {\"x\": 80, \"y\": 230, \"w\": 180, \"h\": 45}}\n"
-        "]\n"
-        "Return [] if nothing is missing. Return ONLY the JSON array, no explanation."
+        f"These images are {send_w}×{send_h}px.\n"
+        "IMAGE 1: Clean original.\n"
+        "IMAGE 2: Already-extracted elements (green=header, blue=text, red=logo, orange=separator).\n\n"
+        "═══ S3 ASSET PALETTE ═══\n"
+        "Badges: badge/youtube, badge/food_network, badge/opentable_diners_choice, badge/hulu, badge/tripadvisor, badge/yelp, badge/michelin, badge/zagat, badge/best_of\n"
+        "Ornaments/Separators: ornament/floral_swash_centered, separator/wavy_line, separator/double_line, separator/diamond_rule\n\n"
+        "TASK: Identify elements in IMAGE 1 with NO box in IMAGE 2.\n"
+        "1. Missing Text: subtype='category_header' or 'item_name' etc.\n"
+        "2. Missing Images: subtype='badge' or 'collage_box'. Use semantic_label from palette if recognized (e.g. badge/youtube).\n"
+        "3. Missing Separators: subtype='separator'. Use semantic_label from palette (e.g. separator/wavy_line).\n\n"
+        "Return ONLY a JSON array of objects:\n"
+        "[{\"type\": \"text|image|separator\", \"subtype\": \"...\", \"content\": \"...\", \"semantic_label\": \"...|null\", \"bbox\": {\"x\":#, \"y\":#, \"w\":#, \"h\":#}}]\n"
     )
 
     try:
@@ -1769,58 +1923,48 @@ def _verification_pass(
             messages=[{
                 "role": "user",
                 "content": [
-                    {"type": "text", "text": "IMAGE 1 — Clean original:"},
+                    {"type": "text", "text": "IMAGE 1 — Clean:"},
                     {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": clean_b64}},
-                    {"type": "text", "text": "IMAGE 2 — Extraction overlay:"},
+                    {"type": "text", "text": "IMAGE 2 — Overlay:"},
                     {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": overlay_b64}},
                     {"type": "text", "text": verify_prompt},
                 ],
             }],
         )
-
-        raw = (response.content[0].text or "").strip() if response.content else "[]"
-        # Extract JSON array
+        raw = response.content[0].text or "[]"
         import re as _re
         match = _re.search(r"\[.*\]", raw, _re.DOTALL)
-        if not match:
-            print("[verify_pass] no JSON array in response")
-            return elements
-
+        if not match: return elements
         missing = json.loads(match.group())
-        if not missing:
-            print("[verify_pass] nothing missing — extraction complete")
-            return elements
-
-        print(f"[verify_pass] found {len(missing)} missing elements")
-        inv_scale = 1.0 / scale  # map back to original image coords
-
-        for dec in missing:
-            bd = dec.get("bbox") or {}
-            abs_bd = {
-                "x": float(bd.get("x", 0)) * inv_scale,
-                "y": float(bd.get("y", 0)) * inv_scale,
-                "w": float(bd.get("w", 100)) * inv_scale,
-                "h": float(bd.get("h", 30)) * inv_scale,
-            }
-            elem_h = max(1.0, abs_bd["h"])
-            elements.append({
-                "type": "text",
-                "subtype": dec.get("subtype", "category_header"),
-                "content": dec.get("content", ""),
-                "bbox": abs_bd,
-                "style": {
-                    "font_size": round(elem_h * 0.75, 1),
-                    "font_weight": "normal",
-                    "font_style": "italic",
-                    "font_family": dec.get("font_family", "decorative-script"),
-                    "color": "#1a1a1a",
-                    "text_align": dec.get("text_align", "center"),
-                },
-                "column": int(dec.get("column", 0)),
-            })
-
+        
+        inv_scale = 1.0 / scale
+        for m in missing:
+            bd = m.get("bbox") or {}
+            abs_bd = {k: v * inv_scale for k, v in bd.items()}
+            m_type = m.get("type", "text")
+            
+            if m_type == "text":
+                elem_h = max(1.0, abs_bd.get("h", 30))
+                elements.append({
+                    "type": "text",
+                    "subtype": m.get("subtype", "category_header"),
+                    "content": m.get("content", ""),
+                    "bbox": abs_bd,
+                    "style": {
+                        "font_size": round(elem_h * 0.75, 1),
+                        "font_weight": "normal", "font_style": "italic",
+                        "font_family": "decorative-script", "color": "#1a1a1a", "text_align": "center"
+                    },
+                    "column": int(m.get("column", 0)),
+                })
+            else: # image, logo, or separator — treat "logo" as "image" (badge)
+                elements.append({
+                    "type": "image" if m_type in ("image", "logo") else "separator",
+                    "subtype": m.get("subtype", "badge" if m_type == "logo" else "ornament"),
+                    "semantic_label": m.get("semantic_label"),
+                    "bbox": abs_bd,
+                })
         return elements
-
     except Exception as exc:
         print(f"[verify_pass] failed: {exc}")
         return elements
@@ -2027,10 +2171,11 @@ def build_menu_data_from_claude(
             column=int(cat_d.get("column") or 0)
         )
         for item_d in cat_d.get("items", []):
+            raw_price = item_d.get("price")
             cat.items.append(MenuItem(
                 name=str(item_d.get("name") or ""),
                 description=item_d.get("description"),
-                price=item_d.get("price"),
+                price=str(raw_price) if raw_price is not None else None,
             ))
         categories.append(cat)
 
