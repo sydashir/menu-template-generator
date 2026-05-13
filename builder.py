@@ -5,7 +5,7 @@ from typing import List, Optional, Tuple
 from models import (
     BBox, TextStyle, LineStyle,
     TextElement, LogoElement, SeparatorElement, ImageElement,
-    Template, TemplateMeta, CanvasMeta,
+    Template, TemplateMeta, CanvasMeta, FontAsset,
     RawBlock, RawLine, SemanticType, SeparatorSubtype,
 )
 
@@ -42,13 +42,23 @@ def build_template(
     side: str = "full",
     logo_info: Optional[dict] = None,
     background_color: str = "#ffffff",
+    fonts: Optional[List[dict]] = None,
 ) -> Template:
     elements = []
     max_font = max((b.font_size for b, _ in classified), default=12.0)
+    # Family names we have a registered TTF for — text in these fonts
+    # uses the canonical name; anything else falls back to the 5-way category.
+    registered_families = {f["family"] for f in (fonts or [])}
 
     for (block, sem), col in zip(classified, col_assignments):
         font_size = _infer_font_size(block, max_font)
         alignment = _infer_alignment(block, canvas_w)
+
+        # Prefer the embedded font's real name when we have its binary —
+        # makes the renderer pick the @font-face we register from font_assets.
+        chosen_family = block.font_family
+        if block.font_family_raw and block.font_family_raw in registered_families:
+            chosen_family = block.font_family_raw
 
         elem = TextElement(
             id=_make_id("text", block.text, round(block.x), round(block.y)),
@@ -60,7 +70,7 @@ def build_template(
                 font_size=font_size,
                 font_weight="bold" if block.is_bold else "normal",
                 font_style="italic" if (block.is_italic or block.font_family == "decorative-script") else "normal",
-                font_family=block.font_family,
+                font_family=chosen_family,
                 color=block.color,
                 text_align=alignment,
             ),
@@ -125,6 +135,7 @@ def build_template(
         ),
         canvas=CanvasMeta(width=canvas_w, height=canvas_h, background_color=background_color),
         elements=elements,
+        fonts=[FontAsset(**f) for f in (fonts or [])],
     )
 
 
@@ -154,6 +165,7 @@ def build_template_from_claude(
     canvas_h: int = 0,
     logo_image_data: Optional[str] = None,
     background_color: str = "#ffffff",
+    fonts: Optional[List[dict]] = None,
 ) -> Template:
     """Build Template directly from Claude's full layout extraction (elements with bboxes)."""
     elements = []
@@ -264,4 +276,5 @@ def build_template_from_claude(
         ),
         canvas=CanvasMeta(width=canvas_w, height=canvas_h, background_color=background_color),
         elements=elements,
+        fonts=[FontAsset(**f) for f in (fonts or [])],
     )

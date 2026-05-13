@@ -171,7 +171,9 @@ Rules:
 - bbox: x=left edge, y=top edge, w=width, h=height — all in image pixels
 - background_color: sample the dominant background color of the canvas (e.g. #fce4ec for pink, #1a1a1a for dark, #ffffff for white)
 - Include ALL text elements visible (nothing omitted)
-- Section headers written in cursive/handwriting/decorative script are category_header — do NOT skip them
+- Section headers in cursive/handwriting/decorative script are category_header — do NOT skip them.
+  Words like "Sharable", "Starters", "Entrées", "Sides", "Desserts", "Cocktails", "Wine",
+  "Brunch", "Lunch", "Dinner" are category_header even when they are a single word.
 - Include ALL separator/divider/line/border/ornament elements
 - Include logo if present (graphical image element, not text)
 - column=0 for left or single column, column=1 for right column
@@ -185,6 +187,10 @@ _MAX_IMG_DIM = 1920  # resize images larger than this before sending to API
 
 _TOOL_SCHEMA = {
     "name": "extract_menu_layout",
+    # NOTE: strict=True (Anthropic structured outputs) requires
+    # additionalProperties:false on every nested object. Schema needs to be
+    # restructured before enabling — Pydantic validation downstream protects
+    # us for now.
     "description": (
         "Extract every visible element from a restaurant menu image with pixel-accurate "
         "bounding boxes. Captures text (semantic type, style), separators/dividers, and logos. "
@@ -344,7 +350,7 @@ Key rules:
 - background_color: sample the dominant background color of the canvas — output as #rrggbb hex
 - bbox: x=left edge px, y=top edge px, w=width px, h=height px (in provided image dimensions)
 - Include ALL text elements — nothing omitted, even small footer text
-- Section headers in cursive/handwriting/decorative script must be captured as category_header — never skip them
+- Section headers in cursive/handwriting/decorative script must be captured as category_header — never skip them. Single-word cursive headers (Sharable, Starters, Entrées, Sides, etc.) are category_header even without other context.
 - Include ALL separator/divider/line/border/ornament elements
 - Include logo if present (graphical image, emblem, crest, illustration — not text-based branding). If unsure, include it.
 - font_size: pixel_height * 0.75 (approximate pt)
@@ -792,10 +798,21 @@ Use these canonical slugs to fetch clean PNGs from S3. Set semantic_label to one
 
 STEP 1 — SKELETON SCAN (do before anything else):
 Visually scan IMAGE 1 for ALL section/category headers and decorative dividers/separators.
+Section headers are often set in a DIFFERENT typeface (cursive/script/calligraphy) than
+the menu items below them. Examples: "Sharable", "Starters", "Entrées", "Broths & Greens",
+"Sides", "Desserts", "Cocktails", "Wine List", "Beer", "Bar Menu", "Brunch", "Lunch",
+"Dinner", "Kids Menu". These ARE category_header even when they are a single word.
 
 STEP 2 — LABEL OCR BLOCKS:
 For each numbered block [1, 2, 3] in IMAGE 2: assign subtype, column (0=left, 1=right), font_family.
 If a block is actually a fancy divider (like a dashed or wavy line), set subtype to "separator" and assign the correct semantic_label from the palette.
+
+CATEGORY-HEADER RULES (apply aggressively — false negatives are worse than false positives):
+  - Any short (1-3 word) block set in a noticeably different / cursive / script font → category_header
+  - Any block followed below by a horizontal stack of items+prices → the block above is the category_header
+  - Decorative-script words like "Sharable", "Starters", "Entrées", "Sides" → category_header even if no font hint
+  - Single word in significantly larger font than surrounding text → category_header
+  - The restaurant name (logo wordmark or biggest top-of-page text) is restaurant_name, NOT category_header
 
 STEP 3 — LABEL GRAPHICAL CANDIDATES:
 For each numbered box [G1, G2, C1, C2] in IMAGE 2: identify its type in graphic_labels.
@@ -805,7 +822,15 @@ Assign subtype (badge, ornament, collage_box) and semantic_label from the S3 pal
 "As seen on" / "As featured in" panels MUST be labeled as collage_box.
 Circular award/brand badges (Food Network, Diners' Choice, TripAdvisor, etc.) MUST be labeled as badge with the correct semantic_label.
 YouTube/Yelp/Hulu icons MUST be labeled as badge with the correct semantic_label.
-Set semantic_label for EVERY recognized badge — do not leave it null if you can match it to the palette.
+
+CRITICAL — NEVER LEAVE semantic_label NULL when:
+  - the shape is clearly circular and contains brand text/icon → match to a badge/* slug
+  - the shape is a flourish/swash under a header → match to ornament/floral_swash_centered or ornament/floral_swash_left
+  - the shape is a calligraphic/scrolled rule → match to ornament/calligraphic_rule or ornament/scroll_divider
+  - the shape is a wavy/double/dotted line → match to separator/wavy_line / separator/double_line / separator/dotted_ornament
+Only return null when the element is a unique custom artwork (e.g. the restaurant's
+own monogram/wordmark) that doesn't resemble any palette item. Default behaviour:
+pick the closest palette match rather than null.
 
 STEP 4 — DECORATIVE ELEMENTS (Missed by SoM):
 For each section header or fancy divider from Step 1 that has NO numbered box in IMAGE 2:
@@ -824,6 +849,10 @@ Use semantic_label from the S3 palette for any recognized badge.
 
 _HYBRID_TOOL_SCHEMA = {
     "name": "label_menu_layout",
+    # NOTE: strict=True requires additionalProperties:false + every property
+    # in `required` on every nested object. This schema has many optional fields
+    # so we rely on Pydantic validation downstream instead. See _TOOL_SCHEMA for
+    # the strict-mode example.
     "description": "Extract menu layout with semantic labels and S3 asset matching.",
     "input_schema": {
         "type": "object",

@@ -742,6 +742,17 @@ def process(file_path: str, output_dir: str, file_stem: str = None) -> list[dict
 
     # Extract PDF text blocks once for the whole file (not per-page)
     pdf_blocks_by_page = extract_blocks_pdf(file_path) if ext in SUPPORTED_PDF else []
+    # Extract embedded font binaries once — same TTF set applies to every page.
+    pdf_fonts: list[dict] = []
+    if ext in SUPPORTED_PDF:
+        try:
+            from extractor import extract_embedded_fonts
+            pdf_fonts = extract_embedded_fonts(file_path)
+            if pdf_fonts:
+                print(f"[pipeline] extracted {len(pdf_fonts)} embedded fonts: "
+                      f"{', '.join(f['family'] for f in pdf_fonts)}")
+        except Exception as exc:
+            print(f"[pipeline] font extraction skipped: {exc}")
 
     for img, page_idx in pages:
         sides = []
@@ -822,7 +833,7 @@ def process(file_path: str, output_dir: str, file_stem: str = None) -> list[dict
                 menu_data = build_menu_data(
                     classified=classified,
                     col_assignments=col_assignments,
-                    source_file=p.name,
+                    source_file=stem,
                     side=side_label,
                     num_separators=len(lines),
                 )
@@ -832,7 +843,7 @@ def process(file_path: str, output_dir: str, file_stem: str = None) -> list[dict
                     lines=lines,
                     canvas_w=canvas_w,
                     canvas_h=canvas_h,
-                    source_file=p.name,
+                    source_file=stem,
                     page=page_idx + 1,
                     side=side_label,
                     logo_info=logo_info,
@@ -840,6 +851,7 @@ def process(file_path: str, output_dir: str, file_stem: str = None) -> list[dict
                         claude_layout.get("background_color", "#ffffff")
                         if claude_layout is not None else "#ffffff"
                     ),
+                    fonts=pdf_fonts,
                 )
 
                 # Inject graphics from Claude Vision (logos, badges, S3 decorators)
@@ -881,6 +893,10 @@ def process(file_path: str, output_dir: str, file_stem: str = None) -> list[dict
                         template.elements.append(dec)
                         _existing_graphic_centers.append((cx, cy))
                         print(f"[pipeline] PDF extra decorator anchored: {dec.get('semantic_label','?')}")
+
+                # After graphics injection, reflect logo presence in menu_data
+                if any(el.get("type") == "logo" for el in template.elements):
+                    menu_data.logo_detected = True
 
             elif claude_layout is not None:
                 # === IMAGE VISION PATH ===
@@ -1045,7 +1061,7 @@ def process(file_path: str, output_dir: str, file_stem: str = None) -> list[dict
                 md_raw = claude_layout.get("menu_data", {})
                 menu_data = build_menu_data_from_claude(
                     md_raw,
-                    source_file=p.name,
+                    source_file=stem,
                     side=side_label,
                     num_separators=sum(1 for e in elements if e.get("type") == "separator"),
                     num_columns=num_cols,
@@ -1140,7 +1156,7 @@ def process(file_path: str, output_dir: str, file_stem: str = None) -> list[dict
 
                 template = build_template_from_claude(
                     claude_layout,
-                    source_file=p.name,
+                    source_file=stem,
                     page=page_idx + 1,
                     side=side_label,
                     canvas_w=canvas_w,
@@ -1161,7 +1177,7 @@ def process(file_path: str, output_dir: str, file_stem: str = None) -> list[dict
                 menu_data = build_menu_data(
                     classified=classified,
                     col_assignments=col_assignments,
-                    source_file=p.name,
+                    source_file=stem,
                     side=side_label,
                     num_separators=len(lines),
                 )
@@ -1171,7 +1187,7 @@ def process(file_path: str, output_dir: str, file_stem: str = None) -> list[dict
                     lines=lines,
                     canvas_w=canvas_w,
                     canvas_h=canvas_h,
-                    source_file=p.name,
+                    source_file=stem,
                     page=page_idx + 1,
                     side=side_label,
                     logo_info=logo_info,

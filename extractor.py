@@ -15,6 +15,95 @@ SUPPORTED_PDF_EXTS = {".pdf"}
 PDF_RENDER_DPI = 200
 
 
+_SUBSET_PREFIX_RE = re.compile(r"^[A-Z]{6}\+")
+
+
+def _clean_font_name(font_name: str) -> str:
+    """Strip the PDF subset prefix (e.g. 'AAAAAA+Montserrat-Bold' → 'Montserrat-Bold')."""
+    if not font_name:
+        return ""
+    return _SUBSET_PREFIX_RE.sub("", font_name).strip()
+
+
+def _font_weight_style_from_name(name: str) -> Tuple[str, str]:
+    """Infer (weight, style) tokens from a font's PostScript name."""
+    n = name.lower()
+    weight = "bold" if any(k in n for k in ("bold", "black", "heavy", "extrabold", "semibold", "demibold")) else "normal"
+    style = "italic" if any(k in n for k in ("italic", "oblique")) else "normal"
+    return weight, style
+
+
+def extract_embedded_fonts(file_path: str) -> List[dict]:
+    """Extract embedded TTF/OTF font binaries from a PDF.
+
+    Returns a list of dicts (one per unique font xref):
+      {family, data_base64, weight, style, format, is_subset}
+    Subset fonts (the 'AAAAAA+' prefixed ones) contain only the glyphs actually
+    used in the document — perfect for re-rendering the original text byte-exact
+    via @font-face. The renderer falls back to 5-way generic families for any
+    text whose font isn't in this list.
+    """
+    import base64 as _b64
+    fonts: List[dict] = []
+    seen_xrefs: set[int] = set()
+    seen_families: set[str] = set()
+
+    try:
+        doc = fitz.open(file_path)
+    except Exception as exc:
+        print(f"[extract_embedded_fonts] open failed: {exc}")
+        return []
+
+    for page in doc:
+        for finfo in page.get_fonts(full=True):
+            # finfo: (xref, ext, type, basefont, refname, encoding, ...)
+            xref = finfo[0]
+            if xref in seen_xrefs:
+                continue
+            seen_xrefs.add(xref)
+
+            ext = (finfo[1] or "").lower()
+            if ext not in ("ttf", "otf"):
+                continue  # cannot @font-face Type1/CFF easily
+
+            try:
+                _, ext_out, _type, buf = doc.extract_font(xref)
+            except Exception as exc:
+                print(f"[extract_embedded_fonts] xref={xref} extract failed: {exc}")
+                continue
+            if not buf:
+                continue
+
+            basefont = finfo[3] or ""
+            is_subset = bool(_SUBSET_PREFIX_RE.match(basefont))
+            family = _clean_font_name(basefont)
+            if not family:
+                continue
+
+            # Two fonts with the same clean family + same weight/style are
+            # equivalent for rendering — keep the larger (more complete) one.
+            if family in seen_families:
+                # Replace if this binary is bigger (more glyphs).
+                for existing in fonts:
+                    if existing["family"] == family and len(buf) > _b64.b64decode(existing["data_base64"]).__len__():
+                        existing["data_base64"] = _b64.b64encode(buf).decode("ascii")
+                        existing["is_subset"] = is_subset
+                continue
+            seen_families.add(family)
+
+            weight, style = _font_weight_style_from_name(family)
+            fonts.append({
+                "family": family,
+                "data_base64": _b64.b64encode(buf).decode("ascii"),
+                "weight": weight,
+                "style": style,
+                "format": "truetype" if ext_out.lower() == "ttf" else "opentype",
+                "is_subset": is_subset,
+            })
+
+    return fonts
+
+
 def _map_font_family(font_name: str) -> str:
     """Map a PDF font name to one of our standard web-renderable families."""
     fn = font_name.lower()
@@ -114,6 +203,7 @@ def extract_blocks_pdf(file_path: str) -> List[List[RawBlock]]:
                     if not text:
                         continue
                     r = span["bbox"]
+                    raw_font = span["font"]
                     blocks.append(RawBlock(
                         text=text,
                         x=r[0] * scale,
@@ -123,9 +213,10 @@ def extract_blocks_pdf(file_path: str) -> List[List[RawBlock]]:
                         font_size=span["size"] * scale,
                         is_bold=(bool(span.get("flags", 0) & 16)
                              or bool(re.search(r'bold|black|heavy|demi|semibold|extrabold',
-                                               span["font"], re.I))),
-                        is_italic="Italic" in span["font"] or "italic" in span["font"],
-                        font_family=_map_font_family(span["font"]),
+                                               raw_font, re.I))),
+                        is_italic="Italic" in raw_font or "italic" in raw_font,
+                        font_family=_map_font_family(raw_font),
+                        font_family_raw=_clean_font_name(raw_font),
                         color=_span_color_to_hex(span.get("color", 0)),
                         page=page_idx,
                         source="pdf",
@@ -448,15 +539,54 @@ def detect_logo_pdf(file_path: str, page_idx: int = 0) -> dict | None:
     return None
 
 
+# Strict word: "D A I L Y" → "DAILY" (alphanumerics separated by single spaces).
 _CHAR_SPACED = re.compile(r"^([A-Za-z0-9](?:\s[A-Za-z0-9]){2,})$")
 
 
 def _normalize_spaced(text: str) -> str:
-    """Collapse 'D A I L Y' → 'DAILY' for character-spaced PDF text."""
+    """Collapse character-spaced PDF text like 'D A I L Y' → 'DAILY'.
+
+    Also handles fragmented multi-token strings ('9 : 0 0  A M  -  2 : 0 0  P M')
+    by collapsing any run of 1-character alphanumerics separated by whitespace.
+    Punctuation (:, -, /) is preserved as a join boundary.
+    """
     stripped = text.strip()
+    if not stripped:
+        return stripped
+
+    # Fast path: simple "D A I L Y" pattern.
     if _CHAR_SPACED.match(stripped):
         return stripped.replace(" ", "")
-    return stripped
+
+    # General case: walk tokens, glue single-char alphanumerics together,
+    # keep punctuation as-is, normalize whitespace.
+    tokens = stripped.split()
+    if len(tokens) < 3:
+        return stripped
+
+    def is_single_alnum(t: str) -> bool:
+        return len(t) == 1 and t.isalnum()
+
+    def is_join_punct(t: str) -> bool:
+        return len(t) == 1 and t in ":-/.,&"
+
+    # Bail out if fewer than 3 single-char alnums — not a spaced run.
+    if sum(1 for t in tokens if is_single_alnum(t)) < 3:
+        return stripped
+
+    out: list[str] = []
+    buf: list[str] = []
+    for t in tokens:
+        if is_single_alnum(t) or is_join_punct(t):
+            buf.append(t)
+        else:
+            if buf:
+                out.append("".join(buf))
+                buf = []
+            out.append(t)
+    if buf:
+        out.append("".join(buf))
+    return " ".join(out)
 
 
 def is_double_sided(img: Image.Image) -> bool:

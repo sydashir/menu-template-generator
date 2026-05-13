@@ -359,7 +359,9 @@
       const color = s.color || '#000000';
       const align = s.text_align || 'left';
 
-      // Map font_family from JSON to loaded Google Fonts (or browser fallbacks)
+      // Map font_family from JSON to loaded Google Fonts (or browser fallbacks).
+      // If the family matches an @font-face we registered from template.fonts,
+      // use it directly so text renders byte-exact to the source PDF.
       const FONT_CSS = {
         'decorative-script': '"Great Vibes", cursive',
         'serif': '"Playfair Display", Georgia, serif',
@@ -367,7 +369,20 @@
         'display': 'fantasy',
         'sans-serif': '"Montserrat", Arial, sans-serif',
       };
-      const fontFamilyCSS = FONT_CSS[s.font_family] || '"Montserrat", Arial, sans-serif';
+      let fontFamilyCSS;
+      const raw = s.font_family || 'sans-serif';
+      if (document.fonts.check(`12px "${raw}"`)) {
+        // Registered as an embedded @font-face — use it, with a sensible fallback chain.
+        const lc = raw.toLowerCase();
+        const stack = lc.includes('signature') || lc.includes('script') || lc.includes('vibes')
+          ? `"${raw}", "Great Vibes", cursive`
+          : lc.includes('serif')
+          ? `"${raw}", "Playfair Display", Georgia, serif`
+          : `"${raw}", "Montserrat", Arial, sans-serif`;
+        fontFamilyCSS = stack;
+      } else {
+        fontFamilyCSS = FONT_CSS[raw] || '"Montserrat", Arial, sans-serif';
+      }
 
       ctx.fillStyle = color;
       ctx.textAlign = align;
@@ -858,6 +873,41 @@
       return JSON.parse(txt);
     }
 
+    // Tracks which @font-face families we've already registered so a multi-page
+    // PDF doesn't re-add the same TTF for each page.
+    const _registeredFonts = new Set();
+
+    // Convert a base64 TTF/OTF blob into a registered FontFace so the canvas
+    // can render text in the document's original typeface (e.g. BrittanySignatureRegular)
+    // instead of falling back to a generic family. Quiet on errors — text still
+    // renders via the 5-way fallback if registration fails.
+    async function registerTemplateFonts(template) {
+      const fonts = Array.isArray(template && template.fonts) ? template.fonts : [];
+      if (!fonts.length) return;
+      const ready = [];
+      for (const f of fonts) {
+        if (!f || !f.family || !f.data_base64) continue;
+        const key = `${f.family}|${f.weight || 'normal'}|${f.style || 'normal'}`;
+        if (_registeredFonts.has(key)) continue;
+        try {
+          const bin = Uint8Array.from(atob(f.data_base64), c => c.charCodeAt(0));
+          const face = new FontFace(f.family, bin.buffer, {
+            weight: f.weight || 'normal',
+            style: f.style || 'normal',
+            display: 'block',
+          });
+          ready.push(face.load().then(loaded => {
+            document.fonts.add(loaded);
+            _registeredFonts.add(key);
+          }).catch(err => console.warn('[fonts] failed to load', f.family, err)));
+        } catch (err) {
+          console.warn('[fonts] decode failed', f.family, err);
+        }
+      }
+      await Promise.all(ready);
+      await document.fonts.ready;
+    }
+
     async function onTemplateFilesChanged() {
       const files = Array.from(els.templateFiles.files || []);
       state.templateFiles = files;
@@ -871,6 +921,11 @@
         } catch (e) {
           console.error('Invalid JSON:', f.name, e);
         }
+      }
+
+      // Register fonts from every loaded template so they're ready before render.
+      for (const t of state.templates) {
+        await registerTemplateFonts(t);
       }
 
       els.templateSelect.innerHTML = '';
@@ -987,6 +1042,7 @@
         state.templateFiles = [{ name: id }];
         state.menuDataList = [dataJson];
         state.index = 0;
+        await registerTemplateFonts(tmplJson);
         await render();
       } catch (e) {
         console.error('autoLoadFromId error:', e);

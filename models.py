@@ -46,7 +46,11 @@ class RawBlock(BaseModel):
     font_size: float = 12.0
     is_bold: bool = False
     is_italic: bool = False
+    # Generic 5-way category used as renderer fallback.
     font_family: str = "sans-serif"
+    # Canonical PDF font name with subset prefix stripped (e.g. 'BrittanySignatureRegular').
+    # Only set on the PDF path; empty for OCR.
+    font_family_raw: str = ""
     color: str = "#000000"
     page: int = 0
     source: Literal["pdf", "ocr"] = "ocr"
@@ -117,11 +121,28 @@ class TemplateMeta(BaseModel):
     num_columns: int = 1
 
 
+class FontAsset(BaseModel):
+    """A font file embedded in the source document.
+
+    `family` is the name used in TextStyle.font_family on text elements that
+    use this font (subset prefix stripped). `data_base64` is the TTF/OTF binary
+    base64-encoded — the renderer registers it via the FontFace API so text
+    renders byte-exact to the source.
+    """
+    family: str
+    data_base64: str
+    weight: Literal["normal", "bold"] = "normal"
+    style: Literal["normal", "italic"] = "normal"
+    format: Literal["truetype", "opentype"] = "truetype"
+    is_subset: bool = True
+
+
 class Template(BaseModel):
     version: str = "1.0.0"
     metadata: TemplateMeta
     canvas: CanvasMeta
     elements: List[Dict[str, Any]]
+    fonts: List[FontAsset] = []
 
 
 class MenuItem(BaseModel):

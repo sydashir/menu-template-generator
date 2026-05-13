@@ -6,7 +6,15 @@ from models import RawBlock, SemanticType, MenuCategory, MenuItem, MenuData
 PRICE_RE = re.compile(r"^\$?\s?\d{1,4}(?:[./]\d{1,4})?(?:\.\d{2})?$")
 PRICE_TAIL_RE = re.compile(r"\s+(\$?\s?\d{1,4}(?:[./]\d{1,4})?(?:\.\d{2})?)$")
 PHONE_RE = re.compile(r"[\+\(]?[1-9][0-9 \.\-\(\)]{7,}[0-9]")
-ADDRESS_KEYWORDS = {"street", "ave", "blvd", "rd", "suite", "ste", "drive"}
+# Use word-boundary regex — old substring set matched "ave" inside "have",
+# "rd" inside "undercooked", flagging warnings & footers as addresses.
+# Also require a number nearby so non-address text mentioning "street" doesn't trip.
+ADDRESS_RE = re.compile(
+    r"\b\d{1,6}\s+\w+.*\b(street|st\.?|avenue|ave\.?|blvd\.?|boulevard|"
+    r"road|rd\.?|suite|ste\.?|drive|dr\.?|lane|ln\.?|way|court|ct\.?|"
+    r"place|pl\.?|highway|hwy\.?|parkway|pkwy\.?)\b",
+    re.IGNORECASE,
+)
 
 
 def detect_columns(blocks: List[RawBlock], canvas_w: float) -> List[int]:
@@ -78,14 +86,23 @@ def _classify(b: RawBlock, max_font: float, header_zone: float, restaurant_assig
     if PHONE_RE.fullmatch(text):
         return "phone"
 
-    lower = text.lower()
-    if any(kw in lower for kw in ADDRESS_KEYWORDS):
+    if ADDRESS_RE.search(text):
         return "address"
 
     font_ratio = b.font_size / max(max_font, 1)
 
-    # Top area: first meaningful text is the restaurant/menu name
-    if header_zone and b.y <= header_zone and not restaurant_assigned and len(text) > 1:
+    # Top area: only promote text to restaurant_name if it looks like a name —
+    # at least 3 chars, contains a letter, and uses near-max font.
+    # Otherwise it's likely a section header ("Brunch", "Dinner Menu") next
+    # to a real logo graphic — the logo carries the brand, not this text.
+    if (
+        header_zone
+        and b.y <= header_zone
+        and not restaurant_assigned
+        and len(text) >= 3
+        and any(c.isalpha() for c in text)
+        and font_ratio >= 0.85
+    ):
         return "restaurant_name"
 
     # Large font below header = section/category header
