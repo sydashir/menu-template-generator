@@ -1499,10 +1499,17 @@ def process(file_path: str, output_dir: str, file_stem: str = None) -> list[dict
                         # Pad generously on the LEFT to include the stylized
                         # "HAPPY HOUR" sun-burst wordmark (sits to the left of
                         # the inner content text in the source).
-                        cluster_x1 = min(x[0] for x in xs) - 260
+                        # R19.2: 260 left pad cropped the leading "H" of "HAPPY".
+                        # Bump to 420; sun-rays also extend above so y-top → 100.
+                        # Clamp to the right half of the canvas so the wider
+                        # left-pad doesn't bleed into item-name text.
+                        cluster_x1 = min(x[0] for x in xs) - 420
                         cluster_x2 = max(x[1] for x in xs) + 30
-                        cluster_y1 = min(y[0] for y in ys) - 60
+                        cluster_y1 = min(y[0] for y in ys) - 100
                         cluster_y2 = max(y[1] for y in ys) + 40
+                        # R19.2: clamp to right half of canvas so the wider
+                        # left-pad never captures menu item text in the centre/left.
+                        cluster_x1 = max(int(canvas_w * 0.45), int(cluster_x1))
                         cluster_x1 = max(0, int(cluster_x1))
                         cluster_y1 = max(0, int(cluster_y1))
                         cluster_x2 = min(canvas_w, int(cluster_x2))
