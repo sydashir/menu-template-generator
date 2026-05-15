@@ -417,9 +417,27 @@
 
       const fontSize = Math.max(8, safeNum(s.font_size, 12)) * state.scale;
       const fontWeight = s.font_weight || 'normal';
-      const fontStyle = s.font_style || 'normal';
+      let fontStyle = s.font_style || 'normal';
       const color = s.color || '#000000';
       const align = s.text_align || 'left';
+
+      // R19.1: signature/script fonts ship with `font-style: normal` faces
+      // (e.g. BrittanySignatureRegular). Requesting italic forces a fallback
+      // chain that ends up at Great Vibes with faux italic+bold synthesis,
+      // which renders as bold-italic sans. Force normal on these families so
+      // the actual cursive face is used.
+      {
+        const rawLc = (s.font_family || '').toLowerCase();
+        if (
+          rawLc.includes('signature') ||
+          rawLc.includes('script') ||
+          rawLc.includes('vibes') ||
+          rawLc.includes('brittany') ||
+          rawLc.includes('calligraph')
+        ) {
+          fontStyle = 'normal';
+        }
+      }
 
       // Map font_family from JSON to loaded Google Fonts (or browser fallbacks).
       // If the family matches an @font-face we registered from template.fonts,

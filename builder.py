@@ -69,7 +69,7 @@ def build_template(
             style=TextStyle(
                 font_size=font_size,
                 font_weight="bold" if block.is_bold else "normal",
-                font_style="italic" if (block.is_italic or block.font_family == "decorative-script") else "normal",
+                font_style="italic" if block.is_italic else "normal",
                 font_family=chosen_family,
                 color=block.color,
                 text_align=alignment,
