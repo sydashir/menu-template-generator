@@ -236,7 +236,7 @@ _TOOL_SCHEMA = {
                                     },
                                     "required": ["font_size","font_weight","font_style","font_family","color","text_align"]
                                 },
-                                "column": {"type": "integer", "enum": [0, 1]}
+                                "column": {"type": "integer", "enum": [0, 1, 2]}
                             },
                             "required": ["type","subtype","content","bbox","style","column"]
                         },
@@ -273,7 +273,7 @@ _TOOL_SCHEMA = {
                         },
                         {
                             "type": "object",
-                            "description": "A graphical logo or image region (not text).",
+                            "description": "A graphical logo region (the restaurant's primary wordmark/emblem).",
                             "properties": {
                                 "type": {"type": "string", "enum": ["logo"]},
                                 "bbox": {
@@ -290,6 +290,47 @@ _TOOL_SCHEMA = {
                                 }
                             },
                             "required": ["type","bbox","position_hint"]
+                        },
+                        {
+                            "type": "object",
+                            "description": (
+                                "An image element: a badge, ornament, or collage_box. "
+                                "Badges are circular brand/award icons (Food Network, Diners' "
+                                "Choice, YouTube, Yelp, TripAdvisor, etc.). Ornaments are "
+                                "decorative flourishes/swashes. collage_box is the 'As seen on' "
+                                "panel with multiple logos. Always set semantic_label to one of "
+                                "the canonical S3 slugs when recognized."
+                            ),
+                            "properties": {
+                                "type": {"type": "string", "enum": ["image"]},
+                                "subtype": {
+                                    "type": "string",
+                                    "enum": ["badge", "ornament", "collage_box"]
+                                },
+                                "bbox": {
+                                    "type": "object",
+                                    "properties": {
+                                        "x": {"type": "number"}, "y": {"type": "number"},
+                                        "w": {"type": "number"}, "h": {"type": "number"}
+                                    },
+                                    "required": ["x","y","w","h"]
+                                },
+                                "semantic_label": {
+                                    "type": ["string", "null"],
+                                    "description": (
+                                        "Canonical S3 slug. Badges: badge/food_network, "
+                                        "badge/opentable_diners_choice, badge/youtube, badge/hulu, "
+                                        "badge/tripadvisor, badge/yelp, badge/michelin, "
+                                        "badge/zagat, badge/best_of. Ornaments: "
+                                        "ornament/floral_swash_centered, ornament/floral_swash_left, "
+                                        "ornament/calligraphic_rule, ornament/diamond_rule, "
+                                        "ornament/vine_separator, ornament/scroll_divider. Use null "
+                                        "only when the graphic is unique custom artwork that does "
+                                        "not match any palette slug."
+                                    )
+                                }
+                            },
+                            "required": ["type","subtype","bbox","semantic_label"]
                         }
                     ]
                 }
@@ -351,13 +392,18 @@ Key rules:
 - bbox: x=left edge px, y=top edge px, w=width px, h=height px (in provided image dimensions)
 - Include ALL text elements — nothing omitted, even small footer text
 - Section headers in cursive/handwriting/decorative script must be captured as category_header — never skip them. Single-word cursive headers (Sharable, Starters, Entrées, Sides, etc.) are category_header even without other context.
+- Capture every NON-text graphical element as type=image with subtype=badge|ornament|collage_box and a semantic_label from the S3 palette below:
+   * Badges (circular brand/award icons): badge/food_network, badge/opentable_diners_choice, badge/youtube, badge/hulu, badge/tripadvisor, badge/yelp, badge/michelin, badge/zagat, badge/best_of
+   * Ornaments (decorative flourishes/swashes): ornament/floral_swash_centered, ornament/floral_swash_left, ornament/calligraphic_rule, ornament/diamond_rule, ornament/vine_separator, ornament/scroll_divider
+   * "As seen on" / "As featured in" multi-badge panels: subtype=collage_box
+  ZERO TOLERANCE for null semantic_label on recognizable items — pick the closest palette match.
 - Include ALL separator/divider/line/border/ornament elements
-- Include logo if present (graphical image, emblem, crest, illustration — not text-based branding). If unsure, include it.
+- Include ALL logo regions if present. Each distinct location's name/wordmark/emblem becomes a separate type=logo element in the elements array (primary restaurant name + any sub-logos like secondary locations, chain branches, or dual-branding). If unsure, include it.
 - font_size: pixel_height * 0.75 (approximate pt)
 - font_family: "decorative-script" for cursive/handwritten/calligraphy; "serif" for classic serif; "sans-serif" for modern clean; "display" for large decorative non-script headers
 - text_align: center if element center is in middle 20% of canvas width, else left/right
 - Price strings: strip $ prefix. Keep range format like 18/21. Use MP for market price. null if no price.
-- column: 0 for left or single column, 1 for right column\
+- column: 0 for leftmost column, 1 for middle column on 3-col menus or right column on 2-col menus, 2 for rightmost column on 3-col menus only. On 2-column menus only use 0 and 1.\
 """
 
 
@@ -466,10 +512,13 @@ def extract_full_layout_via_tool_use(img: Image.Image) -> dict | None:
     send_img.convert("RGB").save(buf, format="JPEG", quality=85)
     image_b64 = base64.standard_b64encode(buf.getvalue()).decode("utf-8")
 
+    # Use streaming so we can raise max_tokens above 16384 without hitting the
+    # Anthropic SDK requirement error. Dense pages (As seen on collage_box) can
+    # need ~24k tokens of tool_use args.
     try:
-        response = client.messages.create(
+        with client.messages.stream(
             model="claude-sonnet-4-6",
-            max_tokens=16384,  # 32768 triggers Anthropic SDK streaming requirement error
+            max_tokens=32768,
             system=_TOOL_SYSTEM_PROMPT,
             tools=[_TOOL_SCHEMA],
             tool_choice={"type": "tool", "name": "extract_menu_layout"},
@@ -480,7 +529,8 @@ def extract_full_layout_via_tool_use(img: Image.Image) -> dict | None:
                     {"type": "text", "text": f"Extract the complete layout of this restaurant menu. Image dimensions: {sw}x{sh} pixels."},
                 ],
             }],
-        )
+        ) as stream:
+            response = stream.get_final_message()
     except anthropic.RateLimitError as e:
         print(f"[claude_tool] rate_limit: {e}")
         return None
@@ -489,7 +539,7 @@ def extract_full_layout_via_tool_use(img: Image.Image) -> dict | None:
         return None
 
     if response.stop_reason == "max_tokens":
-        print("[claude_tool] warning: truncated at max_tokens")
+        print("[claude_tool] warning: truncated at max_tokens (consider raising further)")
         return None
 
     data = None
@@ -563,19 +613,30 @@ def _dedup_text_elements(elements: list) -> list:
     # Actually, Surya blocks in our pipeline don't have a 'source' tag inside the element dict here,
     # but they are usually processed first.
     
+    def _safe_int(v):
+        try:
+            return int(v) if v is not None else 0
+        except (TypeError, ValueError):
+            return 0
+
     deduped = []
     for el in text_elements:
         bd = el.get("bbox") or {}
         content = str(el.get("content", ""))
         words = get_word_set(content)
-        col = el.get("column", 0)
-        
+        col = _safe_int(el.get("column", 0))
+        # Normalise the source dict so downstream code sees int column too
+        if not isinstance(el.get("column"), int):
+            el["column"] = col
+
         duplicate_idx = None
         for i, ex_el in enumerate(deduped):
             ex_bd = ex_el.get("bbox") or {}
             ex_content = str(ex_el.get("content", ""))
             ex_words = get_word_set(ex_content)
-            ex_col = ex_el.get("column", 0)
+            ex_col = _safe_int(ex_el.get("column", 0))
+            if not isinstance(ex_el.get("column"), int):
+                ex_el["column"] = ex_col
             
             # Case 0: Identical word set -> merge regardless of column or IoU
             # (Fixes "ghosting" where Claude hallucinates a copy or misassigns column)
@@ -646,94 +707,114 @@ _BADGE_HINTS = {"middle_right", "middle_left", "center_right", "center_left"}
 
 def _enforce_single_logo(elements: list) -> list:
     """
-    Merge multiple detected logo elements into a single logo with a union
-    bounding box. Claude often fragments a complex logo (emblem + decorative
-    frame + brand text graphic) into 2-3 separate logo elements. Rather than
-    discarding the extras, compute the bbox that covers all nearby fragments
-    so the full visual logo region is preserved as one entity.
+    R6-4: cluster logos by vertical region (top / middle / bottom) and merge
+    fragments within the same region. This replaces the prior "single anchor +
+    proximity threshold" approach which collapsed all logos within
+    `anchor_size * 2.0` into one — losing distinct multi-region logos such as
+    the AMI FFL menu's top-center brand, bottom-left "ON THE LAKE" Château,
+    and bottom-center-right "ANNA MARIA" Château.
 
-    Fragments within 2x the anchor logo's largest dimension are merged.
-    Truly distant logos (rare multi-logo menus) are reclassified as image/badge.
+    Two logos belong to the same cluster if their vertical centers are within
+    `min_separation = max(canvas_h_est * 0.20, 200 px)` of each other. For
+    each cluster, the largest-area logo is the anchor and remaining fragments
+    are merged into a union bbox (same as the legacy behaviour, scoped to
+    that region). Up to 3 distinct logos per page survive — they don't get
+    reclassified to image/badge.
     """
     logos = [(i, e) for i, e in enumerate(elements) if e.get("type") == "logo"]
     if len(logos) <= 1:
         return elements
 
-    # Anchor priority:
-    #   2 = top position hint (restaurant logos most commonly at top)
-    #   1 = bottom_center (e.g. Chateau-style menus with logo at page foot)
-    #   0 = everything else (middle_right badges, "as seen on" panels etc.)
-    # Area is the tiebreaker so larger logos beat small fragments.
-    def _logo_score(idx_el):
-        _, el = idx_el
-        hint = (el.get("position_hint") or "").lower()
-        bd = el.get("bbox") or {}
-        area = bd.get("w", 0) * bd.get("h", 0)
-        priority = 2 if hint in _TOP_HINTS else (1 if hint in _PRIMARY_HINTS else 0)
-        return (priority, area)
+    # Estimate canvas height from the spread of all elements (fallback 3400).
+    all_y2 = [
+        (e.get("bbox") or {}).get("y", 0) + (e.get("bbox") or {}).get("h", 0)
+        for e in elements if e.get("bbox")
+    ]
+    canvas_h_est = max(all_y2, default=3400.0) or 3400.0
+    # Same-band threshold: two logos belong to the same vertical band if their
+    # y-centers are within `y_band` of each other.
+    y_band = max(canvas_h_est * 0.15, 150.0)
 
-    anchor_idx, anchor_logo = sorted(logos, key=_logo_score, reverse=True)[0]
-    anchor_bd = anchor_logo.get("bbox") or {}
-    anchor_size = max(anchor_bd.get("w", 100), anchor_bd.get("h", 100))
-    proximity_threshold = anchor_size * 2.0
-    anchor_cx = anchor_bd.get("x", 0) + anchor_bd.get("w", 0) / 2
-    anchor_cy = anchor_bd.get("y", 0) + anchor_bd.get("h", 0) / 2
+    def _bd(item):
+        return item[1].get("bbox") or {}
+    def _cy(item):
+        bd = _bd(item)
+        return bd.get("y", 0) + bd.get("h", 0) / 2
+    def _cx(item):
+        bd = _bd(item)
+        return bd.get("x", 0) + bd.get("w", 0) / 2
+    def _size(item):
+        bd = _bd(item)
+        return max(bd.get("w", 100), bd.get("h", 100))
 
-    # Grow union bbox to include all nearby fragments
-    union_x1 = anchor_bd.get("x", 0)
-    union_y1 = anchor_bd.get("y", 0)
-    union_x2 = union_x1 + anchor_bd.get("w", 0)
-    union_y2 = union_y1 + anchor_bd.get("h", 0)
-    merged_indices = {anchor_idx}
+    # Sort logos by vertical center.
+    logos_sorted = sorted(logos, key=_cy)
 
-    for i, el in logos:
-        if i == anchor_idx:
+    # Greedy clustering: two logos cluster together if they share a y-band AND
+    # are within `anchor_size * 1.2` of each other (so distinct multi-region
+    # logos on the same horizontal line don't get collapsed into one bbox).
+    clusters: list[list[tuple[int, dict]]] = []
+    for item in logos_sorted:
+        cy_i = _cy(item)
+        cx_i = _cx(item)
+        sz_i = _size(item)
+        placed = False
+        for cluster in clusters:
+            same_band = any(abs(cy_i - _cy(it)) <= y_band for it in cluster)
+            if not same_band:
+                continue
+            # Require horizontal/2D proximity to cluster members: merge only when
+            # at least one member is within max(anchor_size, member_size) * 1.2.
+            close_enough = any(
+                ((cx_i - _cx(it)) ** 2 + (cy_i - _cy(it)) ** 2) ** 0.5
+                <= max(sz_i, _size(it)) * 1.2
+                for it in cluster
+            )
+            if close_enough:
+                cluster.append(item)
+                placed = True
+                break
+        if not placed:
+            clusters.append([item])
+
+    # For each cluster, pick the largest-area logo as anchor and union the rest.
+    merged_logos: list[dict] = []
+    for cluster in clusters:
+        if len(cluster) == 1:
+            merged_logos.append(cluster[0][1])
             continue
-        bd = el.get("bbox") or {}
-        cx = bd.get("x", 0) + bd.get("w", 0) / 2
-        cy = bd.get("y", 0) + bd.get("h", 0) / 2
-        dist = ((cx - anchor_cx) ** 2 + (cy - anchor_cy) ** 2) ** 0.5
-        if dist <= proximity_threshold:
-            merged_indices.add(i)
-            union_x1 = min(union_x1, bd.get("x", 0))
-            union_y1 = min(union_y1, bd.get("y", 0))
-            union_x2 = max(union_x2, bd.get("x", 0) + bd.get("w", 0))
-            union_y2 = max(union_y2, bd.get("y", 0) + bd.get("h", 0))
 
-    # Position hint from topmost fragment (most accurate for placement)
-    topmost = min(
-        ((i, e) for i, e in logos if i in merged_indices),
-        key=lambda x: (x[1].get("bbox") or {}).get("y", 0),
-    )[1]
+        def _area(item):
+            bd = item[1].get("bbox") or {}
+            return bd.get("w", 0) * bd.get("h", 0)
+        anchor_idx, anchor = max(cluster, key=_area)
+        anchor_bd = anchor.get("bbox") or {}
+        ux1 = anchor_bd.get("x", 0)
+        uy1 = anchor_bd.get("y", 0)
+        ux2 = ux1 + anchor_bd.get("w", 0)
+        uy2 = uy1 + anchor_bd.get("h", 0)
+        for _, frag in cluster:
+            if frag is anchor:
+                continue
+            fb = frag.get("bbox") or {}
+            ux1 = min(ux1, fb.get("x", 0))
+            uy1 = min(uy1, fb.get("y", 0))
+            ux2 = max(ux2, fb.get("x", 0) + fb.get("w", 0))
+            uy2 = max(uy2, fb.get("y", 0) + fb.get("h", 0))
 
-    result = []
-    logo_inserted = False
-    for i, el in enumerate(elements):
-        if el.get("type") != "logo":
-            result.append(el)
-        elif i in merged_indices:
-            if not logo_inserted:
-                merged_logo = dict(anchor_logo)
-                merged_logo["bbox"] = {
-                    "x": union_x1, "y": union_y1,
-                    "w": union_x2 - union_x1, "h": union_y2 - union_y1,
-                }
-                merged_logo["position_hint"] = topmost.get("position_hint", "top_center")
-                result.append(merged_logo)
-                logo_inserted = True
-        else:
-            # Distant logo — reclassify as image/badge (separate graphical element to crop).
-            # Preserve semantic_label if present so S3 asset lookup can find clean PNG.
-            bd = el.get("bbox") or {}
-            badge_el: dict = {
-                "type": "image",
-                "subtype": "badge",
-                "bbox": bd,
-            }
-            if el.get("semantic_label"):
-                badge_el["semantic_label"] = el["semantic_label"]
-            result.append(badge_el)
-    return result
+        # Topmost fragment provides the position_hint (most accurate for placement).
+        topmost = min(cluster, key=_cy)[1]
+        merged_logo = dict(anchor)
+        merged_logo["bbox"] = {
+            "x": ux1, "y": uy1, "w": ux2 - ux1, "h": uy2 - uy1,
+        }
+        merged_logo["position_hint"] = topmost.get("position_hint", anchor.get("position_hint", "top_center"))
+        merged_logos.append(merged_logo)
+
+    # Rebuild element list: drop ALL original logos, append merged_logos in original order.
+    rebuilt = [e for e in elements if e.get("type") != "logo"]
+    rebuilt.extend(merged_logos)
+    return rebuilt
 
 
 def _preprocess_for_ocr(img: Image.Image) -> Image.Image:
@@ -804,7 +885,8 @@ the menu items below them. Examples: "Sharable", "Starters", "Entrées", "Broths
 "Dinner", "Kids Menu". These ARE category_header even when they are a single word.
 
 STEP 2 — LABEL OCR BLOCKS:
-For each numbered block [1, 2, 3] in IMAGE 2: assign subtype, column (0=left, 1=right), font_family.
+For each numbered block [1, 2, 3] in IMAGE 2: assign subtype, column, font_family.
+column: 0 for leftmost column, 1 for middle column on 3-col menus or right column on 2-col menus, 2 for rightmost column on 3-col menus only. On 2-column menus only use 0 and 1.
 If a block is actually a fancy divider (like a dashed or wavy line), set subtype to "separator" and assign the correct semantic_label from the palette.
 
 CATEGORY-HEADER RULES (apply aggressively — false negatives are worse than false positives):
@@ -836,10 +918,12 @@ STEP 4 — DECORATIVE ELEMENTS (Missed by SoM):
 For each section header or fancy divider from Step 1 that has NO numbered box in IMAGE 2:
 Draw a bbox and assign subtype (category_header or separator) and semantic_label.
 
-STEP 5 — LOGO BBOX:
-Draw ONE unified bbox covering ONLY the PRIMARY restaurant name/branding block.
-IMPORTANT: Do NOT include award circles, badge icons, or "As seen on" panels in logo_bbox — those are graphic_elements.
-The logo_bbox is solely for the restaurant's own name/wordmark/emblem.
+STEP 5 — LOGO BBOXES:
+Identify ALL distinct restaurant logo/branding regions on the page. Each bbox covers ONE location's name, wordmark, or emblem:
+  - PRIMARY: the main restaurant name (usually top-center, largest)
+  - SUB-LOGOS: secondary location names, chain branches, dual-branding (e.g. "ON THE LAKE", "ANNA MARIA")
+  - EXCLUDE: award badges, social icons, "As seen on" panels — those are graphic_elements
+Return up to 3 logo_bboxes per page.
 
 STEP 6 — GRAPHIC ELEMENTS (Non-text graphical regions):
 Scan IMAGE 1 for any OTHER graphical elements (badges, circles, ornaments) NOT already labeled in graphic_labels.
@@ -877,7 +961,7 @@ _HYBRID_TOOL_SCHEMA = {
                             "enum": ["sans-serif", "serif", "decorative-script", "display", "monospace"],
                         },
                         "corrected_text": {"type": ["string", "null"]},
-                        "column": {"type": "integer", "enum": [0, 1]},
+                        "column": {"type": "integer", "enum": [0, 1, 2]},
                         "semantic_label": {"type": ["string", "null"]},
                     },
                     "required": ["id", "subtype"],
@@ -892,7 +976,7 @@ _HYBRID_TOOL_SCHEMA = {
                         "subtype": {"type": "string", "enum": ["category_header", "separator"]},
                         "content": {"type": "string"},
                         "semantic_label": {"type": ["string", "null"]},
-                        "column": {"type": "integer", "enum": [0, 1]},
+                        "column": {"type": "integer", "enum": [0, 1, 2]},
                         "bbox": {
                             "type": "object",
                             "properties": {
@@ -905,14 +989,24 @@ _HYBRID_TOOL_SCHEMA = {
                     "required": ["subtype", "bbox"],
                 },
             },
-            "logo_bbox": {
-                "type": ["object", "null"],
-                "description": "Bounding box for the PRIMARY restaurant name/wordmark/emblem ONLY. Do NOT include award badges, brand circles (Food Network, OpenTable), or 'As seen on' panels here — those go in graphic_labels or graphic_elements.",
-                "properties": {
-                    "x": {"type": "number"}, "y": {"type": "number"},
-                    "w": {"type": "number"}, "h": {"type": "number"},
+            "logo_bboxes": {
+                "type": ["array", "null"],
+                "description": (
+                    "All distinct logo regions on the page (primary + sub-logos). "
+                    "Each bbox covers ONE branding element — the main restaurant name, "
+                    "secondary locations, chain branches, or dual-brand wordmarks. Do NOT "
+                    "include award badges, brand circles (Food Network, OpenTable), or "
+                    "'As seen on' panels here — those go in graphic_labels or graphic_elements. "
+                    "Return up to 3 entries per page (max 5)."
+                ),
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "x": {"type": "number"}, "y": {"type": "number"},
+                        "w": {"type": "number"}, "h": {"type": "number"},
+                    },
+                    "required": ["x", "y", "w", "h"],
                 },
-                "required": ["x", "y", "w", "h"],
             },
             "graphic_labels": {
                 "type": "array",
@@ -1003,37 +1097,45 @@ def _load_surya_models() -> bool:
     os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
     os.environ.setdefault("HF_HUB_OFFLINE", "1")
     os.environ.setdefault("HF_DATASETS_OFFLINE", "1")
-    # Batch recognition lines together for faster MPS throughput (default is often 1)
-    os.environ.setdefault("RECOGNITION_BATCH_SIZE", "32")
+    # Batch sizes — keep small on CPU recognition (large batches don't help on CPU
+    # and dramatically increase memory pressure).
+    os.environ.setdefault("RECOGNITION_BATCH_SIZE", "8")
     os.environ.setdefault("DETECTOR_BATCH_SIZE", "1")
 
     try:
-        # Enable MPS (Apple Silicon GPU) if available
+        # Surya device strategy:
+        # - Detection on MPS = fast and stable.
+        # - Recognition on MPS = pathological slowdowns (3000s/iter) on dense
+        #   pages because of a torch-MPS memory-thrashing bug. Force recognition
+        #   to CPU. Slower per page but deterministic, and never hangs.
+        # Override with MENU_SURYA_REC_DEVICE=mps if a future torch fixes it.
         try:
             import torch as _torch
             if _torch.backends.mps.is_available():
                 os.environ.setdefault("TORCH_DEVICE", "mps")
-                os.environ.setdefault("RECOGNITION_DEVICE", "mps")
                 os.environ.setdefault("DETECTOR_DEVICE", "mps")
-                print("[surya] MPS (Apple Silicon GPU) enabled")
+                os.environ.setdefault("RECOGNITION_DEVICE",
+                                      os.environ.get("MENU_SURYA_REC_DEVICE", "cpu"))
+                print(f"[surya] device: detection=mps recognition={os.environ['RECOGNITION_DEVICE']}")
         except Exception:
             pass
+
+        det_device = os.environ.get("DETECTOR_DEVICE", "cpu")
+        rec_device = os.environ.get("RECOGNITION_DEVICE", "cpu")
 
         # Try new API first (surya >= 0.17)
         try:
             from surya.foundation import FoundationPredictor
             from surya.recognition import RecognitionPredictor
             from surya.detection import DetectionPredictor
-            import torch
-            
-            device = "mps" if torch.backends.mps.is_available() else "cpu"
-            print(f"[surya] loading models on {device}...")
-            
-            _surya_foundation_predictor = FoundationPredictor(device=device)
+
+            print(f"[surya] loading new models — det={det_device}, rec={rec_device}...")
+            # FoundationPredictor drives the recognition model — pin it to rec_device.
+            _surya_foundation_predictor = FoundationPredictor(device=rec_device)
             _surya_rec_predictor = RecognitionPredictor(_surya_foundation_predictor)
-            _surya_det_predictor = DetectionPredictor(device=device)
+            _surya_det_predictor = DetectionPredictor(device=det_device)
             _surya_api_version = "new"
-            print(f"[surya] models ready on {device} (API v0.17+)")
+            print(f"[surya] models ready (API v0.17+)")
             return True
         except ImportError:
             pass
@@ -1045,27 +1147,55 @@ def _load_surya_models() -> bool:
         )
         from surya.model.recognition.model import load_model as _rec_model
         from surya.model.recognition.processor import load_processor as _rec_proc
-        import torch
-        
-        device = "mps" if torch.backends.mps.is_available() else "cpu"
-        print(f"[surya] loading old models on {device}...")
-        
+
+        print(f"[surya] loading old models — det={det_device}, rec={rec_device}...")
         _surya_det_model = _det_model()
-        if device == "mps":
+        if det_device == "mps":
             _surya_det_model = _surya_det_model.to("mps")
-            
         _surya_det_processor = _det_proc()
+
         _surya_rec_model = _rec_model()
-        if device == "mps":
+        if rec_device == "mps":
             _surya_rec_model = _surya_rec_model.to("mps")
-            
+        # Note: rec_device == "cpu" leaves the model on CPU (default) —
+        # avoids the MPS memory-thrashing hang.
+
         _surya_rec_processor = _rec_proc()
         _surya_api_version = "old"
-        print(f"[surya] models ready on {device} (API v0.4.x)")
+        print(f"[surya] models ready (API v0.4.x)")
         return True
     except Exception as exc:
         print(f"[surya] model load failed: {exc}")
         return False
+
+
+# Hard wall-clock cap on a single Surya OCR call. Prevents the 16-hour MPS hang
+# we saw on page 2 of AMI FFL DINNER from ever repeating. Override per-env if you
+# have a really dense page you want to give Surya more budget on.
+_SURYA_TIMEOUT_SEC = int(os.environ.get("MENU_SURYA_TIMEOUT_SEC", "360"))
+
+
+def _run_with_timeout(fn, timeout_sec: int, *args, **kwargs):
+    """Run fn in a worker thread; raise TimeoutError if it exceeds timeout."""
+    import threading
+    box: dict = {}
+
+    def _target():
+        try:
+            box["result"] = fn(*args, **kwargs)
+        except BaseException as e:  # noqa: BLE001
+            box["error"] = e
+
+    t = threading.Thread(target=_target, daemon=True)
+    t.start()
+    t.join(timeout_sec)
+    if t.is_alive():
+        # We can't kill a python thread cleanly. Daemon=True ensures it dies on
+        # process exit. The caller's fallback path runs immediately on raise.
+        raise TimeoutError(f"surya inference exceeded {timeout_sec}s")
+    if "error" in box:
+        raise box["error"]
+    return box.get("result")
 
 
 def extract_blocks_surya(img: Image.Image) -> list:
@@ -1076,16 +1206,19 @@ def extract_blocks_surya(img: Image.Image) -> list:
     """
     if not _load_surya_models():
         return []
-    try:
+
+    def _infer():
         if _surya_api_version == "new":
-            results = _surya_rec_predictor([img], det_predictor=_surya_det_predictor)
-        else:
-            from surya.ocr import run_ocr
-            results = run_ocr(
-                [img], [["en"]],
-                _surya_det_model, _surya_det_processor,
-                _surya_rec_model, _surya_rec_processor,
-            )
+            return _surya_rec_predictor([img], det_predictor=_surya_det_predictor)
+        from surya.ocr import run_ocr
+        return run_ocr(
+            [img], [["en"]],
+            _surya_det_model, _surya_det_processor,
+            _surya_rec_model, _surya_rec_processor,
+        )
+
+    try:
+        results = _run_with_timeout(_infer, _SURYA_TIMEOUT_SEC)
         blocks = []
         for line in results[0].text_lines:
             text = (line.text or "").strip()
@@ -1107,6 +1240,10 @@ def extract_blocks_surya(img: Image.Image) -> list:
             })
         print(f"[surya] {len(blocks)} lines extracted")
         return blocks
+    except TimeoutError as exc:
+        # Caller falls back to Claude Vision; we still keep Surya for the next page.
+        print(f"[surya] {exc} — falling back for this page")
+        return []
     except Exception as exc:
         print(f"[surya] inference error: {exc}")
         return []
@@ -1478,9 +1615,9 @@ def extract_layout_surya_som(img: Image.Image) -> dict | None:
     ])
 
     try:
-        response = client.messages.create(
+        with client.messages.stream(
             model="claude-sonnet-4-6",
-            max_tokens=16384,
+            max_tokens=32768,
             system=_HYBRID_SYSTEM_PROMPT,
             tools=[_HYBRID_TOOL_SCHEMA],
             tool_choice={"type": "tool", "name": "label_menu_layout"},
@@ -1488,7 +1625,8 @@ def extract_layout_surya_som(img: Image.Image) -> dict | None:
                 "role": "user",
                 "content": content_blocks,
             }],
-        )
+        ) as stream:
+            response = stream.get_final_message()
 
     except (anthropic.RateLimitError, anthropic.APIError) as exc:
         # Re-raise to trigger the Gemini fallback in pipeline.py
@@ -1572,18 +1710,32 @@ def extract_layout_surya_som(img: Image.Image) -> dict | None:
             el_dict["semantic_label"] = dec.get("semantic_label")
         elements.append(el_dict)
 
-    # Logo: Claude's approximate bbox, exact crop happens later in pipeline
-    lb = data.get("logo_bbox")
-    if isinstance(lb, dict) and lb.get("w", 0) > 0 and lb.get("h", 0) > 0:
+    # R7-A: Multi-logo support — iterate every entry in logo_bboxes (plural).
+    # Backward-compat: if Claude returns the old singular `logo_bbox`, wrap it
+    # as a 1-item list before parsing.
+    logo_bboxes = data.get("logo_bboxes") or []
+    if not logo_bboxes:
+        single = data.get("logo_bbox")
+        if isinstance(single, dict) and single.get("w", 0) > 0 and single.get("h", 0) > 0:
+            logo_bboxes = [single]
+    for idx, lb in enumerate(logo_bboxes[:5]):
+        if not isinstance(lb, dict) or lb.get("w", 0) <= 0 or lb.get("h", 0) <= 0:
+            continue
         if scale_x != 1.0 or scale_y != 1.0:
-            lb = {"x": lb.get("x", 0) * scale_x, "y": lb.get("y", 0) * scale_y,
-                  "w": lb.get("w", 0) * scale_x,  "h": lb.get("h", 0) * scale_y}
-        # Infer position_hint from actual bbox position rather than hardcoding top_center
+            lb = {
+                "x": lb.get("x", 0) * scale_x, "y": lb.get("y", 0) * scale_y,
+                "w": lb.get("w", 0) * scale_x, "h": lb.get("h", 0) * scale_y,
+            }
         _lb_cx = lb.get("x", 0) + lb.get("w", 0) / 2
-        _lb_y  = lb.get("y", 0)
+        _lb_y = lb.get("y", 0)
         _py = "top" if _lb_y < orig_h * 0.4 else ("middle" if _lb_y < orig_h * 0.7 else "bottom")
         _px = "left" if _lb_cx < orig_w * 0.35 else ("right" if _lb_cx > orig_w * 0.65 else "center")
-        elements.append({"type": "logo", "bbox": lb, "position_hint": f"{_py}_{_px}"})
+        elements.append({
+            "type": "logo",
+            "bbox": lb,
+            "position_hint": f"{_py}_{_px}",
+            "logo_index": idx,
+        })
 
     # Process graphic_labels (G# and C# mappings)
     graphic_label_map = {lbl.get("id"): lbl for lbl in data.get("graphic_labels", []) if lbl.get("id")}
@@ -1643,6 +1795,11 @@ def extract_layout_surya_som(img: Image.Image) -> dict | None:
 
     # 2. Snap decorative headers to content below and center in column
     elements = _snap_decorative_headers(elements, orig_w=orig_w)
+
+    # 2b. (Fix 1) Snap ornament/separator graphic decorators into content gaps,
+    #     or drop them if no plausible gap exists. Mirrors the y-snapping that
+    #     `_snap_decorative_headers` does for type=="text", but for graphics.
+    elements = _snap_graphic_decorators(elements, orig_w=orig_w)
 
     # 3. Enforce single primary logo — reclassify distant graphic logos as image/badge so they
     #    get individually pixel-cropped instead of all sharing the restaurant logo image_data.
@@ -1741,6 +1898,32 @@ def _mask_logo_elements(elements: list) -> list:
     don't mask center-page text at the same y-band).
     """
     logos = [e for e in elements if e.get("type") == "logo"]
+    if not logos:
+        return elements
+
+    # Determine effective canvas area from the spread of element bboxes — used to
+    # reject logos that have grown to cover most of the page (e.g., after a
+    # pixel-refinement runaway). A logo bbox > 35% of canvas area is almost
+    # certainly a false positive and we should NOT mask anything against it.
+    all_x2 = [
+        (e.get("bbox") or {}).get("x", 0) + (e.get("bbox") or {}).get("w", 0)
+        for e in elements if e.get("bbox")
+    ]
+    all_y2 = [
+        (e.get("bbox") or {}).get("y", 0) + (e.get("bbox") or {}).get("h", 0)
+        for e in elements if e.get("bbox")
+    ]
+    canvas_area_est = max(max(all_x2, default=1.0), 1.0) * max(max(all_y2, default=1.0), 1.0)
+    safe_logos = []
+    for logo in logos:
+        lbd = logo.get("bbox") or {}
+        area = float(lbd.get("w", 0)) * float(lbd.get("h", 0))
+        if area > canvas_area_est * 0.35:
+            print(f"[mask_logo] skip oversized logo bbox: {lbd.get('w', 0):.0f}×{lbd.get('h', 0):.0f} "
+                  f"({100 * area / canvas_area_est:.1f}% of canvas)")
+            continue
+        safe_logos.append(logo)
+    logos = safe_logos
     if not logos:
         return elements
 
@@ -1871,6 +2054,19 @@ def _refine_logo_bbox_by_pixels(
     abs_y = max(0, sy1 + iy - pad)
     abs_w = min(canvas_w - abs_x, iw + pad * 2)
     abs_h = min(canvas_h - abs_y, ih + pad * 2)
+
+    # Sanity: the refined bbox must not have grown beyond a sane multiple of the
+    # rough bbox. If it did (rough was a small logo and we found ink across the
+    # whole zone — usually a sign the threshold caught body text), reject.
+    if abs_w > rw * 3.0 or abs_h > rh * 3.0:
+        print(f"[logo_pixel] reject runaway expansion: rough {rw:.0f}×{rh:.0f} "
+              f"→ refined {abs_w:.0f}×{abs_h:.0f}")
+        return None
+    # Sanity: refined must not cover more than 25% of the canvas (logos rarely do)
+    if (abs_w * abs_h) > (canvas_w * canvas_h) * 0.25:
+        print(f"[logo_pixel] reject oversized logo: {abs_w:.0f}×{abs_h:.0f} "
+              f"({100 * abs_w * abs_h / (canvas_w * canvas_h):.1f}% of canvas)")
+        return None
 
     print(f"[logo_pixel] ({abs_x:.0f},{abs_y:.0f}) {abs_w:.0f}×{abs_h:.0f}px  "
           f"(rough was x={rx:.0f},y={ry:.0f} {rw:.0f}×{rh:.0f})")
@@ -2093,6 +2289,162 @@ def _snap_decorative_headers(elements: list, orig_w: float = 1200) -> list:
     return result
 
 
+def _snap_graphic_decorators(elements: list, orig_w: float = 1200) -> list:
+    """
+    Fix 1 — snap (or drop) ornament/separator GRAPHIC elements so they land in
+    the largest vertical gap between content blocks near their detected y.
+
+    `_snap_decorative_headers` only fixes ``type=="text"`` cursive headers; this
+    function does the equivalent for ``type=="image"`` ornaments and
+    ``type=="separator"`` decorative dividers whose semantic_label is in the
+    ornament/* or separator/* palette (or whose subtype is ornament/
+    decorative_divider).
+
+    Behaviour:
+      - If the element already sits inside the LARGEST nearby content gap, leave
+        it alone.
+      - Otherwise, move it so its vertical center sits in the middle of that gap.
+      - If no nearby gap is large enough to hold it (gap < element_h + 12 px),
+        DROP the element — but only when it has no semantic_label, or its
+        semantic_label is in the ornament/* palette (i.e. it came from Claude's
+        approximate scan). Never drop a `separator` element with subtype
+        horizontal_line / vertical_line and no semantic_label — those are real
+        PyMuPDF vector lines.
+    """
+    if not elements:
+        return elements
+
+    # Sorted, deduped list of non-decorative-text content block centers.
+    content_blocks = sorted(
+        (
+            e for e in elements
+            if e.get("type") == "text"
+            and e.get("style", {}).get("font_family") not in ("decorative-script", "display")
+            and e.get("subtype") != "category_header"
+        ),
+        key=lambda b: float(b.get("bbox", {}).get("y", 0)),
+    )
+
+    def _is_target(el: dict) -> bool:
+        t = el.get("type")
+        if t not in ("image", "separator"):
+            return False
+        sl = el.get("semantic_label") or ""
+        sub = el.get("subtype") or ""
+        if sl.startswith(("ornament/", "separator/")):
+            return True
+        if sub in ("ornament", "decorative_divider"):
+            return True
+        return False
+
+    def _droppable(el: dict) -> bool:
+        # Only drop graphics that came from Claude's approximate decorator scan.
+        # PyMuPDF vector separators (subtype=horizontal_line/vertical_line, no
+        # semantic_label) are spatially correct — never drop them.
+        sl = el.get("semantic_label") or ""
+        sub = el.get("subtype") or ""
+        if el.get("type") == "separator" and sub in ("horizontal_line", "vertical_line") and not sl:
+            return False
+        if sl.startswith("ornament/"):
+            return True
+        if not sl:
+            return True  # unlabeled graphic — must justify its position
+        return False
+
+    result: list = []
+    for el in elements:
+        if not _is_target(el):
+            result.append(el)
+            continue
+
+        bd = el.get("bbox") or {}
+        el_y = float(bd.get("y", 0))
+        el_h = float(bd.get("h", 0)) or 1.0
+        el_cy = el_y + el_h / 2
+
+        # y-band around the element to consider for gap-detection.
+        band = max(150.0, el_h * 2.5)
+        band = min(band, 200.0)  # spec says ±200 ceiling
+
+        # Collect content centers within the band (sorted by y).
+        nearby = []
+        for b in content_blocks:
+            bb = b.get("bbox") or {}
+            by = float(bb.get("y", 0))
+            bh = float(bb.get("h", 0))
+            b_top = by
+            b_bot = by + bh
+            # consider any block that overlaps the band
+            if b_bot >= el_cy - band and b_top <= el_cy + band:
+                nearby.append((b_top, b_bot))
+
+        nearby.sort()
+
+        # Build gaps between consecutive nearby content blocks (real inter-content gaps).
+        real_gaps = []  # list of (gap_top, gap_bot, gap_h)
+        for i in range(len(nearby) - 1):
+            gap_top = nearby[i][1]
+            gap_bot = nearby[i + 1][0]
+            if gap_bot > gap_top:
+                real_gaps.append((gap_top, gap_bot, gap_bot - gap_top))
+        # Open space above/below the cluster — fallback only (Defect B fix).
+        fallback_gaps = []
+        if nearby:
+            top_block_y = nearby[0][0]
+            bot_block_y = nearby[-1][1]
+            open_top = (max(0.0, el_cy - band), top_block_y, top_block_y - max(0.0, el_cy - band))
+            open_bot = (bot_block_y, el_cy + band, el_cy + band - bot_block_y)
+            if open_top[2] > 0:
+                fallback_gaps.append(open_top)
+            if open_bot[2] > 0:
+                fallback_gaps.append(open_bot)
+
+        need = el_h + 12.0
+        # Real gaps get first dibs; fall back to open margins only if no real gap fits.
+        real_usable = [g for g in real_gaps if g[2] >= need]
+        gaps = real_gaps if real_usable else (real_gaps + fallback_gaps)
+
+        if not gaps:
+            # No content blocks within the band — leave alone (likely a page margin).
+            result.append(el)
+            continue
+
+        # Largest nearby gap.
+        largest = max(gaps, key=lambda g: g[2])
+        gap_top, gap_bot, gap_h = largest
+
+        if gap_h < need:
+            # No suitable home nearby — drop if it's a Claude-injected guess,
+            # otherwise leave the element where it is.
+            if _droppable(el):
+                print(f"[snap_graphic] drop {el.get('semantic_label') or el.get('subtype','?')} "
+                      f"@ y={el_cy:.0f} (no gap, max nearby={gap_h:.0f}px, need {need:.0f}px)")
+                continue
+            result.append(el)
+            continue
+
+        # Defect A fix — already inside ANY usable gap? leave it.
+        already_in_a_usable_gap = any(
+            g_top <= el_cy <= g_bot and g_h >= need
+            for (g_top, g_bot, g_h) in gaps
+        )
+        if already_in_a_usable_gap:
+            result.append(el)
+            continue
+
+        # Move so element center sits at the gap midpoint.
+        new_cy = (gap_top + gap_bot) / 2.0
+        new_y = new_cy - el_h / 2.0
+        moved = dict(el)
+        moved["bbox"] = dict(bd)
+        moved["bbox"]["y"] = float(new_y)
+        print(f"[snap_graphic] move {el.get('semantic_label') or el.get('subtype','?')} "
+              f"y={el_cy:.0f}→{new_cy:.0f} (gap {gap_top:.0f}–{gap_bot:.0f}, h={gap_h:.0f}px)")
+        result.append(moved)
+
+    return result
+
+
 def merge_layouts(primary: dict | None, secondary: dict | None,
                   math_first: bool = False, orig_w: float = 1200) -> dict | None:
     """
@@ -2178,6 +2530,9 @@ def merge_layouts(primary: dict | None, secondary: dict | None,
     # Post-processing: snap shifted decorative headers to their content below.
     # Eliminates overlap between cursive headers and item text.
     merged = _snap_decorative_headers(merged, orig_w=orig_w)
+
+    # Fix 1: same gap-snapping for ornament/separator graphic decorators.
+    merged = _snap_graphic_decorators(merged, orig_w=orig_w)
 
     # Logo masking: delete text/separators inside the detected logo area to prevent duplicates
     merged = _mask_logo_elements(merged)

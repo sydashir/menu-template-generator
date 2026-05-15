@@ -1,7 +1,7 @@
 import base64
 import hashlib
 from datetime import datetime, timezone
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 from models import (
     BBox, TextStyle, LineStyle,
     TextElement, LogoElement, SeparatorElement, ImageElement,
@@ -166,6 +166,7 @@ def build_template_from_claude(
     logo_image_data: Optional[str] = None,
     background_color: str = "#ffffff",
     fonts: Optional[List[dict]] = None,
+    logo_image_data_dict: Optional[dict] = None,
 ) -> Template:
     """Build Template directly from Claude's full layout extraction (elements with bboxes)."""
     elements = []
@@ -191,7 +192,8 @@ def build_template_from_claude(
             if el_type == "text":
                 style_raw = raw_el.get("style")
                 sd = style_raw if isinstance(style_raw, dict) else {}
-                col = min(1, max(0, int(_safe_float(raw_el.get("column"), 0))))
+                # R5-A: widened to support 3-column layouts (0, 1, or 2).
+                col = min(2, max(0, int(_safe_float(raw_el.get("column"), 0))))
                 col_vals.append(col)
                 raw_subtype = raw_el.get("subtype", "other_text")
                 subtype = raw_subtype if raw_subtype in _VALID_TEXT_SUBTYPES else "other_text"
@@ -238,10 +240,18 @@ def build_template_from_claude(
                 elements.append(sep.model_dump())
 
             elif el_type == "logo":
+                # R7-A: per-logo image lookup via dict[logo_index] → base64 PNG.
+                # Falls back to the legacy single logo_image_data argument.
+                logo_idx = int(raw_el.get("logo_index", 0) or 0)
+                img_data = None
+                if logo_image_data_dict and logo_idx in logo_image_data_dict:
+                    img_data = logo_image_data_dict[logo_idx]
+                if img_data is None:
+                    img_data = logo_image_data
                 logo = LogoElement(
-                    id=_make_id("logo", round(bbox.x), round(bbox.y)),
+                    id=_make_id("logo", round(bbox.x), round(bbox.y), logo_idx),
                     bbox=bbox,
-                    image_data=logo_image_data,
+                    image_data=img_data,
                     position_hint=raw_el.get("position_hint") or "top_center",
                 )
                 elements.append(logo.model_dump())

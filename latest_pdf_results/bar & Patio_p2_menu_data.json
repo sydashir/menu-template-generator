@@ -1,0 +1,81 @@
+{
+  "source_file": "bar & Patio",
+  "side": "full",
+  "restaurant_name": "The Château Restaurant & Bar",
+  "tagline": null,
+  "address": null,
+  "phone": null,
+  "categories": [
+    {
+      "name": "Salads",
+      "column": 1,
+      "items": [
+        {
+          "name": "CAESAR SALAD SIDE 7 / ENTREE",
+          "description": "romaine, shaved parmesan, house made croutons, caesar dressing",
+          "price": "14"
+        },
+        {
+          "name": "ADD CHICKEN +11, SHRIMP +15, FISH OF THE DAY",
+          "description": null,
+          "price": "19"
+        },
+        {
+          "name": "CLASSIC WEDGE SALAD",
+          "description": "iceberg, shaved red onion, cherry tomatoes, bacon, crumbled blue cheese,",
+          "price": "14"
+        },
+        {
+          "name": "ADD CHICKEN +11, SHRIMP +15, FISH OF THE DAY",
+          "description": null,
+          "price": "19"
+        },
+        {
+          "name": "KALE/ARUGULA/BEET SALAD SIDE 8/ENTREE",
+          "description": "baby arugula, goat cheese, walnuts, white balsamic lime vinaigrette",
+          "price": "14"
+        },
+        {
+          "name": "ADD CHICKEN +11, SHRIMP +15, FISH OF THE DAY",
+          "description": "salad dressing options: ranch, blue cheese, white balsamic, caesar",
+          "price": "19"
+        },
+        {
+          "name": "DAILY",
+          "description": null,
+          "price": null
+        },
+        {
+          "name": "3-5PM",
+          "description": null,
+          "price": null
+        }
+      ]
+    },
+    {
+      "name": "Handhelds",
+      "column": 0,
+      "items": [
+        {
+          "name": "ALL AMERICAN BURGER",
+          "description": "lettuce, tomato and onion on brioche bun",
+          "price": "18"
+        },
+        {
+          "name": "TURKEY BACON CLUB",
+          "description": "choice of white or wheat bread",
+          "price": "17"
+        },
+        {
+          "name": "BLACKENED MAHI SANDWICH",
+          "description": "20% gratuity will be added to the bill for parties of 8 or more guests. / $18 split entrée fee",
+          "price": "20"
+        }
+      ]
+    }
+  ],
+  "logo_detected": true,
+  "num_separators": 8,
+  "num_columns": 2,
+  "layout_notes": "2-column layout, 2 sections detected."
+}

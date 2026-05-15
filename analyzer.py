@@ -15,10 +15,100 @@ ADDRESS_RE = re.compile(
     r"place|pl\.?|highway|hwy\.?|parkway|pkwy\.?)\b",
     re.IGNORECASE,
 )
+# Wine-vintage exclusion: wine list entries ("607 Château Beau-Site, St. Estèphe,
+# 2017") contain ", 20YY" or ", 19YY" plus saint-abbreviations. Real addresses
+# never end in a wine year. If we see one, it's a wine, not an address.
+_WINE_YEAR_RE = re.compile(r"\b(19|20)\d{2}\b")
+# Saint-abbreviation exclusion: "St. Estèphe" / "St. Georges-St. Émilion" /
+# "St. Tropez" — followed by a capitalized non-state word. State postal codes
+# are 2 uppercase letters so we keep those (e.g. "123 Main St. Boston, MA").
+_SAINT_FALSE_POS_RE = re.compile(
+    r"\b(?:st|saint)\.?\s+[A-Z][a-zé-]+\b",
+    re.IGNORECASE,
+)
+
+
+# Tight address pattern: NUMBER then 1-4 plain words then a street keyword,
+# WITHOUT a comma between them. Catches "5325 Marina Dr" and "123 Main St" but
+# rejects "224 Pinot Noir, Pike Road" where the number is the wine code and the
+# street word comes after a comma.
+_TIGHT_ADDRESS_RE = re.compile(
+    r"\b\d{1,6}\s+(?:[A-Za-z][\w.'-]*\s+){0,4}"
+    r"(street|st\.?|avenue|ave\.?|blvd\.?|boulevard|"
+    r"road|rd\.?|suite|ste\.?|drive|dr\.?|lane|ln\.?|way|court|ct\.?|"
+    r"place|pl\.?|highway|hwy\.?|parkway|pkwy\.?)\b",
+    re.IGNORECASE,
+)
+_US_ZIP_RE = re.compile(r"\b[A-Z]{2}\s*\d{5}\b")
+
+# R3-4: wine varietal + country/region words. If the candidate "address" contains
+# any of these, it's a wine-list entry, not an address.
+_WINE_VOCAB = frozenset({
+    # Varietals
+    "pinot", "noir", "cabernet", "sauvignon", "chardonnay", "merlot",
+    "syrah", "shiraz", "riesling", "zinfandel", "malbec", "tempranillo",
+    "sangiovese", "nebbiolo", "barbera", "viognier", "grenache", "mourvedre",
+    "champagne", "prosecco", "cava", "rose", "rosé", "brut",
+    "chablis", "burgundy", "bordeaux", "rioja", "chianti", "barolo",
+    "amarone", "barbaresco", "beaujolais",
+    # Regions / countries that show up as wine origins
+    "france", "italy", "spain", "germany", "argentina", "australia",
+    "chile", "portugal", "napa", "sonoma", "tuscany", "rhone",
+    "alsace", "loire", "willamette", "marlborough",
+})
+
+
+def _looks_like_wine_entry(text: str) -> bool:
+    """True if the text contains wine vocabulary that disqualifies it from being an address."""
+    import re as _re
+    # Tokenize on non-letter chars to get clean word boundaries (R3-4 follow-up:
+    # the prior raw-substring branch matched "rose" inside "rosewood drive").
+    tokens = {t for t in _re.split(r"[^A-Za-zÀ-ÿ]+", text.lower()) if t}
+    return bool(tokens & _WINE_VOCAB)
+
+# R3-2: wine-code prefix at the start of a line ("224 ", "164-"). When a line
+# begins with a 2-4 digit wine code, it's not a category header.
+ALL_CAPS_NUMERIC_PREFIX = re.compile(r"^\d{2,4}\b")
+
+
+def _is_address(text: str) -> bool:
+    """Address regex + wine/saint exclusions."""
+    has_zip = bool(_US_ZIP_RE.search(text))
+
+    # R3-4: wine-list entries like "224 Pinot Noir, Pike Road, OR" trip the tight
+    # address regex. If the line contains a varietal or wine-region word AND no
+    # real ZIP code, it's a wine entry.
+    if _looks_like_wine_entry(text) and not has_zip:
+        return False
+
+    # Vintage years (1900-2099) → wine list entry, not an address (unless real zip).
+    if _WINE_YEAR_RE.search(text) and not has_zip:
+        return False
+
+    # Tight match (no comma between number and street keyword) is a strong signal.
+    if _TIGHT_ADDRESS_RE.search(text):
+        # Saint-abbreviation false positive: tight pattern still allows "224 Pinot Noir, Pike Road"
+        # if it matched a different keyword. But require either has_zip OR no saint-pattern.
+        if _SAINT_FALSE_POS_RE.search(text) and not has_zip:
+            return False
+        return True
+
+    # Loose match with zip = also an address ("PO Box 123, Anytown, CA 90210").
+    if has_zip and ADDRESS_RE.search(text):
+        return True
+
+    return False
 
 
 def detect_columns(blocks: List[RawBlock], canvas_w: float) -> List[int]:
-    """Assign column index using the two densest x-coordinate clusters."""
+    """Assign column index using x-position clustering. Supports 2 OR 3 columns.
+
+    R5-A: previous version split at the single largest x-histogram gap, which
+    collapsed 3-column menus (e.g. Sharable / Entrées / Sides) into 2 columns.
+    Now: identify the densest x-bins, look at gaps between them; if two big
+    gaps exist that are far enough apart, treat the page as 3 columns.
+    Otherwise fall back to the original 2-column split.
+    """
     if not blocks:
         return []
 
@@ -28,29 +118,65 @@ def detect_columns(blocks: List[RawBlock], canvas_w: float) -> List[int]:
     hist, edges = np.histogram(x_lefts, bins=100, range=(0, canvas_w))
     smoothed = np.convolve(hist.astype(float), np.ones(5) / 5, mode="same")
 
-    # Pick the 10 densest bins and sort their x positions
-    top_idx = np.argsort(smoothed)[-10:]
+    # Densest bin x-positions (top 15 — gives us room to see 3 clusters)
+    top_idx = np.argsort(smoothed)[-15:]
     top_xs = np.sort(edges[top_idx])
 
     if len(top_xs) < 2:
         return [0] * len(blocks)
 
-    # Find the largest gap between dense-bin positions
+    # Gaps between consecutive dense-bin x-positions
     gaps = np.diff(top_xs)
-    max_gap = float(np.max(gaps))
+    threshold = canvas_w * 0.12   # gap must be >= 12% of canvas to count
 
-    # If no significant gap, treat as single column
-    if max_gap < canvas_w * 0.20:
+    big_gap_indices = [i for i, g in enumerate(gaps) if g > threshold]
+
+    if not big_gap_indices:
         return [0] * len(blocks)
 
-    split_pos = top_xs[int(np.argmax(gaps))]
-    col_split = split_pos + max_gap / 2
+    # Try 3 columns when there are at least 2 big gaps
+    if len(big_gap_indices) >= 2:
+        # Take the 2 largest gaps, sort them in x-order to identify column boundaries
+        two_biggest = sorted(big_gap_indices, key=lambda i: -gaps[i])[:2]
+        # R7-extra: require the two competing gaps to be similar in magnitude
+        # (within 50% of each other). For a genuine 3-col menu the two inter-col
+        # gaps are roughly the same width; on a 2-col menu with description-
+        # indented sub-clusters the second-largest gap is much smaller than the
+        # main inter-col gap and we should NOT treat the page as 3-col.
+        g_big = gaps[two_biggest[0]]
+        g_second = gaps[two_biggest[1]]
+        if g_second < g_big * 0.5:
+            # Not a real 3-col layout; fall through to 2-col split.
+            pass
+        else:
+            two_biggest_sorted = sorted(two_biggest)
+            gi1, gi2 = two_biggest_sorted
+            split_1 = top_xs[gi1] + gaps[gi1] / 2
+            split_2 = top_xs[gi2] + gaps[gi2] / 2
+            # Require the two splits to be far enough apart that we really have 3 columns
+            if (split_2 - split_1) > canvas_w * 0.20:
+                # Sanity: each zone must contain at least 3 blocks. Without this,
+                # a single outlier x-position can mint a phantom 3rd column.
+                z0 = sum(1 for b in blocks if b.x < split_1)
+                z1 = sum(1 for b in blocks if split_1 <= b.x < split_2)
+                z2 = sum(1 for b in blocks if b.x >= split_2)
+                if min(z0, z1, z2) >= 3:
+                    def _assign3(x: float) -> int:
+                        if x < split_1:
+                            return 0
+                        if x < split_2:
+                            return 1
+                        return 2
+                    return [_assign3(b.x) for b in blocks]
 
+    # Fall back to 2 columns (largest gap)
+    split_idx = int(np.argmax(gaps))
+    col_split = top_xs[split_idx] + gaps[split_idx] / 2
     return [0 if b.x < col_split else 1 for b in blocks]
 
 
 def classify_blocks(
-    blocks: List[RawBlock], canvas_h: float = 0
+    blocks: List[RawBlock], canvas_h: float = 0, canvas_w: float = 0
 ) -> List[Tuple[RawBlock, SemanticType]]:
     if not blocks:
         return []
@@ -66,7 +192,7 @@ def classify_blocks(
 
     for idx in order:
         b = blocks[idx]
-        sem = _classify(b, max_font, header_zone, restaurant_assigned)
+        sem = _classify(b, max_font, header_zone, restaurant_assigned, canvas_w=canvas_w)
         if sem == "restaurant_name":
             restaurant_assigned = True
         types[idx] = sem
@@ -74,7 +200,7 @@ def classify_blocks(
     return list(zip(blocks, types))
 
 
-def _classify(b: RawBlock, max_font: float, header_zone: float, restaurant_assigned: bool) -> SemanticType:
+def _classify(b: RawBlock, max_font: float, header_zone: float, restaurant_assigned: bool, canvas_w: float = 0.0) -> SemanticType:
     text = b.text.strip()
 
     if len(text) <= 2:
@@ -86,10 +212,15 @@ def _classify(b: RawBlock, max_font: float, header_zone: float, restaurant_assig
     if PHONE_RE.fullmatch(text):
         return "phone"
 
-    if ADDRESS_RE.search(text):
+    if _is_address(text):
         return "address"
 
     font_ratio = b.font_size / max(max_font, 1)
+    raw_font = (getattr(b, "font_family_raw", "") or "").lower()
+    is_script_font = (
+        b.font_family == "decorative-script"
+        or any(k in raw_font for k in ("signature", "script", "vibes", "brittany", "calligraph"))
+    )
 
     # Top area: only promote text to restaurant_name if it looks like a name —
     # at least 3 chars, contains a letter, and uses near-max font.
@@ -104,6 +235,23 @@ def _classify(b: RawBlock, max_font: float, header_zone: float, restaurant_assig
         and font_ratio >= 0.85
     ):
         return "restaurant_name"
+
+    # Script-font heuristic: short text in a script/signature font, below the
+    # header zone, with no inline price, is overwhelmingly a section header
+    # ("Sharable", "Starters", "Entrées", "Sides"). This catches the cases where
+    # font_ratio falls below 0.75 because the restaurant logo uses an even bigger
+    # script font and skews the max.
+    word_count = len(text.split())
+    if (
+        is_script_font
+        and (not header_zone or b.y > header_zone)
+        and word_count <= 4
+        and not PRICE_TAIL_RE.search(text)
+        and text not in ("&",)
+    ):
+        return "category_header"
+
+    # Removed R3-2: false-positive on item names — see Round 4 diagnosis. Using Claude-validated reclassification in pipeline.py instead.
 
     # Large font below header = section/category header
     # Threshold at 0.75 separates headers (typically >80% of max)
@@ -160,6 +308,9 @@ def build_menu_data(
     categories: List[MenuCategory] = []
     # Track current category per column so items go to the right section
     current_cats: dict[int, MenuCategory] = {}
+    # R3-3 safety valve: park orphan item_name blocks here until end-of-loop.
+    # Restored to a "General" bucket ONLY if no categories were detected at all.
+    orphan_items: list[MenuItem] = []
 
     for (block, sem), col in zip(classified, col_assignments):
         text = block.text.strip()
@@ -182,12 +333,11 @@ def build_menu_data(
                 # Fallback: nearest column that has a category
                 cat = next(iter(current_cats.values()), None)
             if cat is None:
-                # Reuse any existing "General" category to avoid duplicates
-                cat = next((c for c in categories if c.name == "General"), None)
-                if cat is None:
-                    cat = MenuCategory(name="General", column=col)
-                    categories.append(cat)
-                current_cats[col] = cat
+                # R3-3: park as orphan. Restored to "General" at end ONLY if no
+                # categories were ever detected on this side (safety valve below).
+                name, price = _split_name_price(text)
+                orphan_items.append(MenuItem(name=name, price=price))
+                continue
             name, price = _split_name_price(text)
             cat.items.append(MenuItem(name=name, price=price))
         elif sem == "item_description":
@@ -200,6 +350,13 @@ def build_menu_data(
             if cat and cat.items:
                 last = cat.items[-1]
                 cat.items[-1] = MenuItem(name=last.name, description=last.description, price=text)
+
+    # R3-3 safety valve: if no categories were detected AT ALL, restore the
+    # orphans into a "General" bucket so we don't lose every item.
+    if not categories and orphan_items:
+        general = MenuCategory(name="General", column=0, items=orphan_items)
+        categories.append(general)
+        print(f"[analyzer] R3-3 safety valve: {len(orphan_items)} orphan items routed to 'General' (no category headers detected)")
 
     num_cols = max(col_assignments, default=0) + 1
     return MenuData(

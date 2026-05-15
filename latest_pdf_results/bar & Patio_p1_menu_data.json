@@ -1,0 +1,137 @@
+{
+  "source_file": "bar & Patio",
+  "side": "full",
+  "restaurant_name": "The Chateau Restaurant & Bar",
+  "tagline": null,
+  "address": null,
+  "phone": null,
+  "categories": [
+    {
+      "name": "Starters",
+      "column": 1,
+      "items": [
+        {
+          "name": "CHATEAU WINGS",
+          "description": null,
+          "price": "16"
+        },
+        {
+          "name": "SHRIMP COCKTAIL*",
+          "description": "choice: buffalo, bbq, or garlic parmesan",
+          "price": "17"
+        },
+        {
+          "name": "BEEF CARPACCIO*",
+          "description": null,
+          "price": "21"
+        },
+        {
+          "name": "CHICKEN TENDERS",
+          "description": "saffron aioli, truffle oil, shaved parmesan",
+          "price": "14"
+        },
+        {
+          "name": "MOZZARELLA STICKS",
+          "description": null,
+          "price": "10"
+        },
+        {
+          "name": "NEW ZEALAND LAMB LOLLIPOPS",
+          "description": "hoisin glaze, chilled soba noodles, cashew butter",
+          "price": "21"
+        },
+        {
+          "name": "ONION RINGS",
+          "description": null,
+          "price": "8"
+        },
+        {
+          "name": "COCONUT CRUNCHY SHRIMP*",
+          "description": "hand breaded jumbo shrimp, sweet chili sauce",
+          "price": "18"
+        },
+        {
+          "name": "TRUFFLE FRIES",
+          "description": null,
+          "price": "14/7"
+        }
+      ]
+    },
+    {
+      "name": "Soup",
+      "column": 1,
+      "items": [
+        {
+          "name": "FRENCH ONION SOUP",
+          "description": null,
+          "price": null
+        },
+        {
+          "name": "CUP 11 / BOWL",
+          "description": null,
+          "price": "13"
+        }
+      ]
+    },
+    {
+      "name": "Pizza",
+      "column": 1,
+      "items": [
+        {
+          "name": "NAPOLITANA •",
+          "description": null,
+          "price": "$18"
+        },
+        {
+          "name": "ROMA WHITE •",
+          "description": ": spicy soppressata +2",
+          "price": "$18"
+        },
+        {
+          "name": "LOBSTER ALFREDO •",
+          "description": null,
+          "price": "$22"
+        },
+        {
+          "name": "PEPPERONI •",
+          "description": "Jen’s family recipe plum tomato sauce, mozzarella,",
+          "price": "$18"
+        },
+        {
+          "name": "AVELINO •",
+          "description": "Jen’s family recipe plum tomato sauce, mozzarella,",
+          "price": "$20"
+        },
+        {
+          "name": "MUSHROOM •",
+          "description": "Jen’s family recipe plum tomato sauce, mozzarella,",
+          "price": "$18"
+        },
+        {
+          "name": "DAILY",
+          "description": null,
+          "price": null
+        },
+        {
+          "name": "3-5PM",
+          "description": null,
+          "price": null
+        },
+        {
+          "name": "MARGHERITA •",
+          "description": "mozzarella, fresh tomatoes, fresh basil",
+          "price": "$18"
+        },
+        {
+          "name": "941. 238. 6264 ~ WWW.CHATEAURESTAURANTS.COM",
+          "description": null,
+          "price": null
+        }
+      ]
+    }
+  ],
+  "logo_detected": true,
+  "num_separators": 11,
+  "num_columns": 3,
+  "layout_notes": "3-column layout, 3 sections detected."
+}

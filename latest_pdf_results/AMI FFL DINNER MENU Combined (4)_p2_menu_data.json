@@ -1,0 +1,189 @@
+{
+  "source_file": "AMI FFL DINNER MENU Combined (4)",
+  "side": "full",
+  "restaurant_name": "The Ch\u00e2teau Anna Maria",
+  "tagline": null,
+  "address": null,
+  "phone": null,
+  "categories": [
+    {
+      "name": "SPARKLING WINE",
+      "column": 0,
+      "items": [
+        {
+          "name": "164- LAURANT PERRIER SPLIT",
+          "description": null,
+          "price": "149"
+        }
+      ]
+    },
+    {
+      "name": "FRANCE",
+      "column": 1,
+      "items": []
+    },
+    {
+      "name": "CALIFORNIA",
+      "column": 0,
+      "items": []
+    },
+    {
+      "name": "ROS\u00c9",
+      "column": 1,
+      "items": []
+    },
+    {
+      "name": "ADDITIONAL WHITES",
+      "column": 1,
+      "items": []
+    },
+    {
+      "name": "Red Wines",
+      "column": 1,
+      "items": []
+    },
+    {
+      "name": "CALIFORNIA",
+      "column": 0,
+      "items": [
+        {
+          "name": "609 Cabernet, Frank Family Reserve, Napa Valley CA",
+          "description": "209 Cabernet, Crossbarn, Paul Hobbs, Napa Valley, CA",
+          "price": "120"
+        },
+        {
+          "name": "616 Cabernet, Joseph Phelps Insignia, Napa, CA,",
+          "description": "622 Cabernet, Groth, Oakville Napa, CA",
+          "price": "180"
+        },
+        {
+          "name": "601 Cabernet La Joie, V\u00e9rit\u00e9, Sonoma County CA",
+          "description": null,
+          "price": "2017"
+        }
+      ]
+    },
+    {
+      "name": "RHONE",
+      "column": 1,
+      "items": []
+    },
+    {
+      "name": "BORDEAUX, FRANCE (Left Bank)",
+      "column": 1,
+      "items": [
+        {
+          "name": "605A Ch\u00e2teau Les Pagodes de Cos, St. Est\u00e8phe,",
+          "description": null,
+          "price": "195"
+        },
+        {
+          "name": "605B Ch\u00e2teau Les Pagodes de Cos, St. Est\u00e8phe,",
+          "description": null,
+          "price": "150"
+        },
+        {
+          "name": "606A Ch\u00e2teau Leoville Poyferre, St. Julien,",
+          "description": null,
+          "price": "2017"
+        },
+        {
+          "name": "606B Ch\u00e2teau Leoville Poyferre, St. Julien,",
+          "description": null,
+          "price": "114"
+        },
+        {
+          "name": "607 Ch\u00e2teau Beau-Site, St. Est\u00e8phe,",
+          "description": null,
+          "price": "475"
+        },
+        {
+          "name": "610 Ch\u00e2teau Batailley, Grand Cru Classe, Pauillac,",
+          "description": null,
+          "price": "195"
+        },
+        {
+          "name": "608 Ch\u00e2teau Batailley, Lions de Batailley, Pauillac,",
+          "description": null,
+          "price": "2018"
+        },
+        {
+          "name": "620 Ch\u00e2teau l\u2019Eden M\u00e9doc, Bordeaux,",
+          "description": null,
+          "price": "450"
+        }
+      ]
+    },
+    {
+      "name": "BORDEAUX, FRANCE (Right Bank)",
+      "column": 1,
+      "items": [
+        {
+          "name": "612 Ch\u00e2teau Lafleur-Gazin, Pomerol,",
+          "description": null,
+          "price": "499"
+        },
+        {
+          "name": "613 Ch\u00e2teau Saint Andre Corbin, St. Georges-St. \u00c9milion,",
+          "description": null,
+          "price": "2022"
+        }
+      ]
+    },
+    {
+      "name": "BURGUNDY, FRANCE",
+      "column": 1,
+      "items": [
+        {
+          "name": "614 Faiveley, Gevrey-Chambertin 1er Cru, Clos Des Issarts",
+          "description": null,
+          "price": "2023"
+        },
+        {
+          "name": "623 Faiveley, Gevrey-Chambertin Premier Cru Lavaux Saint-Jacques",
+          "description": null,
+          "price": "114"
+        },
+        {
+          "name": "617 Bourgogne Pinot Noir, Philippe Girard, Grand Vin",
+          "description": null,
+          "price": "2017"
+        },
+        {
+          "name": "254 Joseph Faiveley, Pinot Noir, Bourgogne,",
+          "description": "257 Bourgogne Pinot Noir, Prosper Maufoux, Saint-Aubin",
+          "price": "225"
+        }
+      ]
+    },
+    {
+      "name": "WASHINGTON & OREGON",
+      "column": 0,
+      "items": []
+    },
+    {
+      "name": "Other Reds We Love",
+      "column": 1,
+      "items": []
+    },
+    {
+      "name": "AUSTRALIA",
+      "column": 0,
+      "items": []
+    },
+    {
+      "name": "ITALY & SPAIN",
+      "column": 1,
+      "items": []
+    },
+    {
+      "name": "SOUTH AMERICA",
+      "column": 0,
+      "items": []
+    }
+  ],
+  "logo_detected": true,
+  "num_separators": 0,
+  "num_columns": 3,
+  "layout_notes": "3-column layout, 16 sections detected."
+}
