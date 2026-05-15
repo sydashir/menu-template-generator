@@ -456,11 +456,23 @@ def _cleanup_duplicate_graphics(template) -> None:
         sl = el.get("semantic_label") or ""
         if sl.startswith("separator/"):
             continue  # benefit of the doubt — labelled as a real divider
-        # Synthesised header flourishes get an automatic exemption — they were
-        # placed by _synthesize_header_flourishes specifically under a header
-        # and have to live within 30px of the first item below them. The drop
-        # heuristic would otherwise kill the very thing it's supposed to add.
-        if sl.startswith("ornament/floral_swash") or sl.startswith("ornament/calligraphic_rule") or sl.startswith("ornament/scroll_divider") or sl.startswith("ornament/diamond_rule") or sl.startswith("ornament/vine_separator"):
+        # R19.3: narrow exemption — only exempt provenance-tagged synth
+        # header flourishes, AND only when there's no body text within 30 px
+        # below the ornament (else the swash would slice across an item row).
+        prov = el.get("provenance") or ""
+        if prov == "r19_6_synth_header_flourish":
+            el_cy_tmp = _cy(el)
+            el_b_tmp = el.get("bbox") or {}
+            el_y2_tmp = float(el_b_tmp.get("y", 0)) + float(el_b_tmp.get("h", 0))
+            body_below = [
+                t for t in text_els
+                if 0 < (_cy(t) - el_y2_tmp) < 30
+                and (t.get("subtype") not in ("category_header",))
+            ]
+            if not body_below:
+                continue
+            # body text within 30 px below — drop the synth flourish.
+            drop_ids.add(id(el))
             continue
         el_cy = _cy(el)
         nearby_text = [t for t in text_els if abs(_cy(t) - el_cy) < 30]
@@ -612,15 +624,23 @@ def _get_overlap(a: dict, b: dict) -> float:
     return inter / min_area if min_area > 0 else 0.0
 
 
-def _synthesize_header_flourishes(template, side_img, canvas_w: int, canvas_h: int) -> None:
+def _synthesize_header_flourishes(template, side_img, canvas_w: int, canvas_h: int, claude_layout: Optional[dict] = None) -> None:
     """
     For every category_header text element in the template, inject an S3
     `ornament/floral_swash_centered` (or `ornament/floral_swash_left` for
     left-aligned headers) image element 14 px below it. This is keyed off
     the pixel-accurate PyMuPDF text positions, not Claude's approximate
     Vision wavy-line bboxes, so it works regardless of TOL_Y matching.
+
     Skip if there is already an image element with image_data within 40 px
     vertically of where the flourish would go (don't double-up).
+
+    R19.3: Only inject if (a) Claude vision saw an ornament/graphic near the
+    header OR (b) an OpenCV blob match exists near the header. Also skip if
+    another category_header sits within 350 px below in the same column
+    (tight grids like "Add On" where the swash would slice across rows).
+    Tag injected flourishes with provenance `r19_6_synth_header_flourish` so
+    _cleanup_duplicate_graphics can narrowly exempt only the ones we placed.
     """
     from s3_asset_library import resolve_asset
 
@@ -632,6 +652,65 @@ def _synthesize_header_flourishes(template, side_img, canvas_w: int, canvas_h: i
         return
 
     image_els = [e for e in template.elements if e.get("type") == "image"]
+
+    # R19.3: collect Claude-vision ornaments / graphic blobs (subtype includes
+    # any 'ornament', 'separator', 'decorative_*', 'wavy_line', 'swash', etc.)
+    # so we can require evidence-based injection.
+    claude_ornaments: list[dict] = []
+    if claude_layout is not None:
+        for ce in (claude_layout.get("elements", []) or []):
+            sub = (ce.get("subtype") or "").lower()
+            stype = (ce.get("type") or "").lower()
+            if stype in ("ornament", "decorative_divider", "graphic", "image") or \
+               any(k in sub for k in ("ornament", "swash", "wavy", "scroll",
+                                       "diamond", "vine", "calligraph",
+                                       "decorative", "separator", "flourish")):
+                bd = ce.get("bbox")
+                if isinstance(bd, dict):
+                    claude_ornaments.append(ce)
+    # OpenCV blob graphics already live in template.elements as image type
+    # without semantic_label or as separator. Use those bboxes as evidence too.
+    blob_evidence = [
+        e for e in template.elements
+        if e.get("type") in ("image", "separator")
+        and not (e.get("semantic_label") or "").startswith("ornament/floral_swash")
+    ]
+
+    def _has_ornament_near(hx_c: float, hy_c: float, max_dx: float = 600, max_dy: float = 50) -> bool:
+        # max_dy is asymmetric — we look ±50 px vertically around the header
+        # center (sources put a wavy line right under the header text).
+        for ce in claude_ornaments:
+            bd = ce.get("bbox") or {}
+            ex = float(bd.get("x", 0)) + float(bd.get("w", 0)) / 2
+            ey = float(bd.get("y", 0)) + float(bd.get("h", 0)) / 2
+            if abs(ex - hx_c) < max_dx and abs(ey - hy_c) < max_dy:
+                return True
+        for be in blob_evidence:
+            bd = be.get("bbox") or {}
+            ex = float(bd.get("x", 0)) + float(bd.get("w", 0)) / 2
+            ey = float(bd.get("y", 0)) + float(bd.get("h", 0)) / 2
+            if abs(ex - hx_c) < max_dx and abs(ey - hy_c) < max_dy:
+                return True
+        return False
+
+    def _another_header_below(this_header: dict, max_dy: float = 350) -> bool:
+        bd = this_header.get("bbox") or {}
+        my_y = float(bd.get("y", 0)) + float(bd.get("h", 0))
+        my_col = this_header.get("column")
+        my_cx = float(bd.get("x", 0)) + float(bd.get("w", 0)) / 2
+        for o in headers:
+            if o is this_header:
+                continue
+            ob = o.get("bbox") or {}
+            oy = float(ob.get("y", 0))
+            ocol = o.get("column")
+            ocx = float(ob.get("x", 0)) + float(ob.get("w", 0)) / 2
+            # Same column (by index when present, else by x-proximity within 200 px)
+            same_col = (my_col is not None and ocol is not None and my_col == ocol) or \
+                       (abs(my_cx - ocx) < 200)
+            if same_col and 0 < (oy - my_y) < max_dy:
+                return True
+        return False
 
     for h in headers:
         bd = h.get("bbox") or {}
@@ -654,6 +733,18 @@ def _synthesize_header_flourishes(template, side_img, canvas_w: int, canvas_h: i
             for e in image_els
         )
         if already_there:
+            continue
+
+        # R19.3: gate 1 — require ornament evidence near the header centre.
+        # Search window is the area below the header (where a swash would sit).
+        hx_c = hx + hw / 2
+        hy_below_c = hy + hh + 30
+        if not _has_ornament_near(hx_c, hy_below_c, max_dx=max(hw * 1.5, 400), max_dy=80):
+            continue
+
+        # R19.3: gate 2 — skip when the next category_header sits within
+        # 350 px below in the same column (tight section like "Add On").
+        if _another_header_below(h, max_dy=350):
             continue
 
         # Pick centered vs left swash by text_align
@@ -687,6 +778,7 @@ def _synthesize_header_flourishes(template, side_img, canvas_w: int, canvas_h: i
             "type": "image",
             "subtype": "ornament",
             "semantic_label": slug,
+            "provenance": "r19_6_synth_header_flourish",
             "bbox": {
                 "x": max(0.0, flourish_cx - target_w / 2),
                 "y": hy + hh + 18,
@@ -1449,7 +1541,7 @@ def process(file_path: str, output_dir: str, file_stem: str = None) -> list[dict
                     # text elements — uses pixel-accurate PyMuPDF text positions so it
                     # works even when Claude Vision's wavy-line bboxes are too far off
                     # for _enrich_template_separators_from_claude's tight TOL_Y to match.
-                    _synthesize_header_flourishes(template, side_img, canvas_w, canvas_h)
+                    _synthesize_header_flourishes(template, side_img, canvas_w, canvas_h, claude_layout=claude_layout)
                     # R2-1: drop unlabelled decorative_divider separators left behind —
                     # they render as empty bbox outlines because they never got an
                     # image_data or semantic_label assignment from enrichment.
