@@ -1108,8 +1108,12 @@ def _inject_pdf_graphics(
                 break
     if panel is not None:
         panel_el, panel_bd = panel
+        panel_x = float(panel_bd.get("x", 0))
+        panel_y = float(panel_bd.get("y", 0))
+        panel_w = float(panel_bd.get("w", 200))
+        panel_h = float(panel_bd.get("h", 200))
         # Which brands are already inside (or near) the panel?
-        present_inline = set()
+        present_inline_els: dict[str, dict] = {}
         for el in graphic_els:
             if el.get("subtype") != "badge":
                 continue
@@ -1121,18 +1125,21 @@ def _inject_pdf_graphics(
             ey = float(bd.get("y", 0)) + float(bd.get("h", 0)) / 2
             # Treat as "inline panel" if x is in the left zone (not the big-gray right zone).
             if ex < canvas_w * 0.55:
-                present_inline.add(sl)
-        # Inject missing brands as inline-sized (130×130) within the panel bounds.
+                present_inline_els[sl] = el
+        present_inline = set(present_inline_els)
+        # Inject missing brands as inline-sized (90×90) within the panel bounds.
         missing = [b for b in _AS_SEEN_ON_BRANDS if b not in present_inline]
         if missing and present_inline:  # only fire if at least one was present (proves it's an As-Seen-On menu)
-            panel_x = float(panel_bd.get("x", 0))
-            panel_y = float(panel_bd.get("y", 0))
-            panel_w = float(panel_bd.get("w", 200))
+            # R19.5: real row-layout. Allocate one slot per badge across the
+            # panel width; centre the badge inside each slot. No more vertical
+            # stack with i*5 offsets that overlap when more than one is missing.
+            total = len(missing) + len(present_inline)
+            slot_w = panel_w / max(total, 1)
+            size = 90.0
             for i, sl in enumerate(missing):
-                # Stack vertically in the right half of the panel.
-                size = 90.0  # inline badges are ~90 px in source
-                slot_x = panel_x + panel_w * 0.5 + 10 + (i * 5)
-                slot_y = panel_y + 30 + i * (size + 20)
+                slot_idx = len(present_inline) + i
+                slot_x = panel_x + slot_idx * slot_w + (slot_w - size) / 2
+                slot_y = panel_y + (panel_h - size) / 2
                 graphic_els.append({
                     "type": "image",
                     "subtype": "badge",
@@ -1140,6 +1147,59 @@ def _inject_pdf_graphics(
                     "bbox": {"x": slot_x, "y": slot_y, "w": size, "h": size},
                 })
                 print(f"[pipeline] R16 inject missing as-seen-on badge: {sl}")
+
+        # R19.5: per-panel resolver. After injection, sort ALL badges whose
+        # centre lives inside the panel bbox by x and lay them out evenly in
+        # a single row. This corrects Claude bboxes with bogus aspect ratios
+        # (e.g. badge/youtube reported as 216×90 inside a 90×90 slot) and the
+        # overlap that follows.
+        # Force square 90×90 for the brand badges that ship square in source.
+        # Leave badge/youtube at its natural aspect (it really is wide).
+        _SQUARE_BRANDS = {
+            "badge/food_network",
+            "badge/hulu",
+            "badge/best_of",
+            "badge/opentable_diners_choice",
+        }
+        panel_x2 = panel_x + panel_w
+        panel_y2 = panel_y + panel_h
+        in_panel: list[dict] = []
+        for el in graphic_els:
+            if el.get("subtype") != "badge":
+                continue
+            sl = el.get("semantic_label", "")
+            if sl not in _AS_SEEN_ON_BRANDS:
+                continue
+            bd = el.get("bbox") or {}
+            cx_e = float(bd.get("x", 0)) + float(bd.get("w", 0)) / 2
+            cy_e = float(bd.get("y", 0)) + float(bd.get("h", 0)) / 2
+            if panel_x <= cx_e <= panel_x2 and panel_y <= cy_e <= panel_y2:
+                in_panel.append(el)
+        if in_panel:
+            in_panel.sort(key=lambda e: float((e.get("bbox") or {}).get("x", 0)))
+            n = len(in_panel)
+            slot_w = panel_w / n
+            for idx, el in enumerate(in_panel):
+                sl = el.get("semantic_label", "")
+                bd = el.get("bbox") or {}
+                # Force square for the listed brands; keep natural aspect otherwise.
+                if sl in _SQUARE_BRANDS:
+                    bd["w"] = 90.0
+                    bd["h"] = 90.0
+                else:
+                    # Cap height at 90 and keep stored aspect.
+                    cur_w = float(bd.get("w", 90)) or 90.0
+                    cur_h = float(bd.get("h", 90)) or 90.0
+                    asp = cur_w / max(1.0, cur_h)
+                    bd["h"] = 90.0
+                    bd["w"] = 90.0 * asp
+                bw = float(bd["w"])
+                bh = float(bd["h"])
+                # Centre badge in its slot horizontally; centre vertically in panel.
+                bd["x"] = panel_x + idx * slot_w + (slot_w - bw) / 2
+                bd["y"] = panel_y + (panel_h - bh) / 2
+                el["bbox"] = bd
+            print(f"[pipeline] R19.5 panel resolver: laid out {n} as-seen-on badges in row")
 
     # S3 asset resolution (wavy lines, ornaments, known badge PNGs)
     # After fetching, normalize bbox to the asset's natural proportions.
