@@ -455,12 +455,14 @@
       // (e.g. unescaped quotes) and may return false for newly-injected @font-face
       // rules whose data: URL is still parsing. Wrap in try/catch so a hiccup in
       // the check itself never blocks rendering — we just fall through to FONT_CSS.
-      // The registerTemplateFonts() chain already awaits document.fonts.ready
-      // before render() is invoked, so by the time we get here the @font-face
-      // should be registered; the try/catch is defensive.
+      // R19.7: `document.fonts.check()` is also unreliable in headless Playwright
+      // for @font-face data: URLs that ARE loaded — it returns false. Honour our
+      // own _injectedFamilies set (populated by injectFontFaces) as the source of
+      // truth instead of trusting the browser's check.
       let fontRegistered = false;
       try {
-        fontRegistered = document.fonts.check(`12px "${raw}"`);
+        fontRegistered = (typeof _injectedFamilies !== 'undefined' && _injectedFamilies.has(raw))
+          || document.fonts.check(`12px "${raw}"`);
       } catch (_e) {
         fontRegistered = false;
       }
@@ -995,6 +997,11 @@
     // Tracks which @font-face families we've already registered so a multi-page
     // PDF doesn't re-add the same TTF for each page.
     const _registeredFonts = new Set();
+    // R19.7: Source-of-truth set of @font-face family names that have been
+    // injected with non-empty data. The canvas renderer trusts this set instead
+    // of `document.fonts.check()` (which is unreliable in headless Playwright
+    // for data: URL @font-face rules).
+    const _injectedFamilies = new Set();
 
     // R6-1: Canvas 2D's `ctx.font` does NOT consult `document.fonts` — it only
     // sees fonts registered as CSS `@font-face` rules in the document's
@@ -1023,6 +1030,10 @@
         }
 `;
         _registeredFonts.add(key);
+        // R19.7: track family as definitively injected so the canvas-render
+        // path can bypass document.fonts.check() (which is flaky for data:
+        // URL @font-face rules in headless Chromium).
+        _injectedFamilies.add(f.family);
       }
       if (!css) return Promise.resolve();
       const style = document.createElement("style");
