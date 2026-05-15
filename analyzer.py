@@ -3,6 +3,17 @@ from typing import List, Tuple, Optional
 
 from models import RawBlock, SemanticType, MenuCategory, MenuItem, MenuData
 
+# R19.4: footer detection — URLs / "est. YYYY" / city-list strings are not items.
+_URL_RE = re.compile(r"(https?://|www\.)\S+|\b\w+\.(com|net|org|us|co|io)\b", re.I)
+_ESTABLISHED_RE = re.compile(r"^est(\.|ablished)?\s+\d{4}\s*$", re.I)
+_CITY_LIST_RE = re.compile(r"^[A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z]+)*(?:\s*[~\-•·]\s*[A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z]+)*){1,}\s*$")
+
+
+def _is_footer(text: str) -> bool:
+    t = text.strip()
+    return bool(_URL_RE.search(t) or _ESTABLISHED_RE.match(t) or _CITY_LIST_RE.match(t))
+
+
 PRICE_RE = re.compile(r"^\$?\s?\d{1,4}(?:[./]\d{1,4})?(?:\.\d{2})?$")
 PRICE_TAIL_RE = re.compile(r"\s+(\$?\s?\d{1,4}(?:[./]\d{1,4})?(?:\.\d{2})?)$")
 PHONE_RE = re.compile(r"[\+\(]?[1-9][0-9 \.\-\(\)]{7,}[0-9]")
@@ -206,6 +217,11 @@ def _classify(b: RawBlock, max_font: float, header_zone: float, restaurant_assig
     if len(text) <= 2:
         return "other_text"
 
+    # R19.4: catch footer/URL/established/city-list lines before any
+    # bold-upper heuristic claims them as items.
+    if _is_footer(text):
+        return "other_text"
+
     if PRICE_RE.match(text):
         return "item_price"
 
@@ -344,7 +360,11 @@ def build_menu_data(
             cat = current_cats.get(col) or next(iter(current_cats.values()), None)
             if cat and cat.items:
                 last = cat.items[-1]
-                cat.items[-1] = MenuItem(name=last.name, description=text, price=last.price)
+                # R19.4: APPEND multi-line PyMuPDF descriptions instead of
+                # overwriting. The prior code dropped all but the last line
+                # ("home fries, choice of toast" ← lost the breakfast preamble).
+                combined = (last.description + " " + text).strip() if last.description else text
+                cat.items[-1] = MenuItem(name=last.name, description=combined, price=last.price)
         elif sem == "item_price":
             cat = current_cats.get(col) or next(iter(current_cats.values()), None)
             if cat and cat.items:
