@@ -1688,9 +1688,31 @@ def process(file_path: str, output_dir: str, file_stem: str = None) -> list[dict
                                             "h": float(cluster_y2 - cluster_y1),
                                         },
                                         "image_data": base64.b64encode(buf.getvalue()).decode(),
+                                        "provenance": "r19_9_hh_crop",
                                     })
+                                    # R19.9: PyMuPDF separately extracts the OCR text inside the
+                                    # HAPPY HOUR badge ("DAILY", "3-5PM", "$7 select house wines",
+                                    # "$5 draft beer", "20% off"). After we inject the pixel crop
+                                    # those text spans render TWICE — once inside the crop, once
+                                    # as floating text elements that land in the item list as
+                                    # ghost items. Drop any text whose center sits inside the
+                                    # crop bbox so the badge is rendered exactly once.
+                                    dropped = 0
+                                    keep = []
+                                    for _el in template.elements:
+                                        if _el.get("type") == "text":
+                                            _bb = _el.get("bbox") or {}
+                                            _cx_ = float(_bb.get("x", 0)) + float(_bb.get("w", 0)) / 2
+                                            _cy_ = float(_bb.get("y", 0)) + float(_bb.get("h", 0)) / 2
+                                            if (cluster_x1 <= _cx_ <= cluster_x2
+                                                    and cluster_y1 <= _cy_ <= cluster_y2):
+                                                dropped += 1
+                                                continue
+                                        keep.append(_el)
+                                    template.elements = keep
                                     print(f"[pipeline] R17: injected HAPPY HOUR box pixel crop "
-                                          f"({cluster_x1},{cluster_y1}) {cluster_x2-cluster_x1}×{cluster_y2-cluster_y1}")
+                                          f"({cluster_x1},{cluster_y1}) {cluster_x2-cluster_x1}×{cluster_y2-cluster_y1}"
+                                          f" — dropped {dropped} overlapping text spans")
                                 except Exception as exc:
                                     print(f"[pipeline] R17 happy-hour inject failed: {exc}")
 

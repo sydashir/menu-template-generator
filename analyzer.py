@@ -297,15 +297,26 @@ def _classify(b: RawBlock, max_font: float, header_zone: float, restaurant_assig
 
     # Removed R3-2: false-positive on item names — see Round 4 diagnosis. Using Claude-validated reclassification in pipeline.py instead.
 
-    # Large font below header = section/category header
-    # Threshold at 0.75 separates headers (typically >80% of max)
-    # from items that happen to use larger-than-normal font (~50-60%)
-    if font_ratio >= 0.75 and len(text) > 1:
-        return "category_header"
-
     # ALL CAPS bold = menu item (with possible inline price)
     stripped = re.sub(r"[\s$/.,\-\d]", "", text)
     is_upper_content = len(stripped) > 0 and stripped.isupper()
+
+    # Large font below header = section/category header.
+    # Threshold at 0.75 separates headers (typically >80% of max)
+    # from items that happen to use larger-than-normal font (~50-60%).
+    # R19.8: R19.6 excluded script fonts from max_font baseline, which dropped
+    # the denominator and pushed descriptions like "bone in wings, celery, ranch"
+    # above 0.75 → false-promoted to category_header. Require uppercase content
+    # AND no inline price tail before granting header status. Real headers
+    # ("STARTERS", "SPARKLING WINE", "BREAKFAST") have all-caps content; food
+    # descriptions and item-with-price lines do not.
+    if (
+        font_ratio >= 0.75
+        and len(text) > 1
+        and is_upper_content
+        and not PRICE_TAIL_RE.search(text)
+    ):
+        return "category_header"
 
     # Secondary header check: medium font (55-75%) + bold + ALL CAPS + no inline price.
     # Catches category headers that use a smaller font than the restaurant name
