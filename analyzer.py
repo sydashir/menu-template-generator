@@ -192,7 +192,22 @@ def classify_blocks(
     if not blocks:
         return []
 
-    max_font = max(b.font_size for b in blocks)
+    # R19.6: script/signature fonts (e.g. BrittanySignatureRegular logo text)
+    # are typically much bigger than body type and skew max_font upward,
+    # which pushes wine-section headers ("SPARKLING WINE" at 36pt vs Brittany
+    # logo at 67pt → ratio 0.55) just below the 0.55/0.75 category thresholds.
+    # Exclude these from the max_font baseline.
+    def _is_script_family(blk: RawBlock) -> bool:
+        raw = (getattr(blk, "font_family_raw", "") or "").lower()
+        if blk.font_family == "decorative-script":
+            return True
+        return any(k in raw for k in ("signature", "script", "vibes", "brittany", "calligraph"))
+
+    body_blocks = [b for b in blocks if not _is_script_family(b)]
+    if body_blocks:
+        max_font = max(b.font_size for b in body_blocks)
+    else:
+        max_font = max(b.font_size for b in blocks)
     # Header zone: top 12% of canvas — restaurant name lives here
     header_zone = canvas_h * 0.12 if canvas_h > 0 else 0
 
@@ -223,6 +238,11 @@ def _classify(b: RawBlock, max_font: float, header_zone: float, restaurant_assig
         return "other_text"
 
     if PRICE_RE.match(text):
+        # R19.6: wine vintages (4-digit years 1900-2099) are NOT prices. They
+        # render in the same right-aligned column as prices in wine lists and
+        # would otherwise overwrite the real $-price for the same row.
+        if text.isdigit() and len(text) == 4 and 1900 <= int(text) <= 2099:
+            return "other_text"
         return "item_price"
 
     if PHONE_RE.fullmatch(text):
@@ -230,6 +250,14 @@ def _classify(b: RawBlock, max_font: float, header_zone: float, restaurant_assig
 
     if _is_address(text):
         return "address"
+
+    # R19.6: wine-entry promotion. A line that starts with a 2-4 digit code
+    # ("224 Pinot Noir, Pike Road, OR") AND contains wine vocabulary is an
+    # item_name, not an item_description or other_text. Run BEFORE the script-
+    # font / bold-upper paths so it wins on plain Roman body type.
+    import re as _re
+    if _re.match(r"^\d{2,4}\s+", text) and _looks_like_wine_entry(text):
+        return "item_name"
 
     font_ratio = b.font_size / max(max_font, 1)
     raw_font = (getattr(b, "font_family_raw", "") or "").lower()
@@ -328,8 +356,54 @@ def build_menu_data(
     # Restored to a "General" bucket ONLY if no categories were detected at all.
     orphan_items: list[MenuItem] = []
 
-    for (block, sem), col in zip(classified, col_assignments):
+    # R19.6: cross-column wine-list price pairing. In a 3-col wine list the
+    # price sits in the rightmost column on the same row as the item_name in
+    # column 0 or 1. The per-column loop below sees a column-N price and
+    # attaches it to whatever the last item in column N was — which is
+    # usually wrong for wine lists.
+    # Pre-pass: for each item_price block in column N, find the nearest
+    # item_name block in columns < N with |Δy| <= 10 px. If found, attach
+    # the price directly to that name (as a sidecar attribute we read below)
+    # and clear the sem so the per-column loop skips it.
+    classified = list(classified)  # local mutable copy
+    # Build a quick index of item_name blocks for proximity lookup.
+    name_idx = [
+        (i, b, col_assignments[i])
+        for i, (b, s) in enumerate(classified)
+        if s == "item_name"
+    ]
+    paired_prices: dict[int, str] = {}  # item_name index -> price string
+    handled_price_idx: set[int] = set()
+    for i, (b, s) in enumerate(classified):
+        if s != "item_price":
+            continue
+        my_col = col_assignments[i] if i < len(col_assignments) else 0
+        if my_col == 0:
+            continue  # left column already aligns naturally
+        my_y = b.y + b.h / 2
+        # Find nearest item_name in a STRICTLY LOWER column index with |Δy|<=10
+        best = None
+        for j, nb, ncol in name_idx:
+            if ncol >= my_col:
+                continue
+            if j in paired_prices:
+                continue
+            ny = nb.y + nb.h / 2
+            dy = abs(ny - my_y)
+            if dy > 10:
+                continue
+            if best is None or dy < best[0]:
+                best = (dy, j)
+        if best is not None:
+            paired_prices[best[1]] = b.text.strip()
+            handled_price_idx.add(i)
+
+    for i, ((block, sem), col) in enumerate(zip(classified, col_assignments)):
         text = block.text.strip()
+
+        # R19.6: skip prices already paired to a left-column item_name above.
+        if sem == "item_price" and i in handled_price_idx:
+            continue
 
         if sem == "restaurant_name" and not restaurant_name:
             restaurant_name = text
@@ -352,9 +426,15 @@ def build_menu_data(
                 # R3-3: park as orphan. Restored to "General" at end ONLY if no
                 # categories were ever detected on this side (safety valve below).
                 name, price = _split_name_price(text)
+                # R19.6: pick up paired wine-list price too.
+                if price is None and i in paired_prices:
+                    price = paired_prices[i]
                 orphan_items.append(MenuItem(name=name, price=price))
                 continue
             name, price = _split_name_price(text)
+            # R19.6: pick up paired wine-list price too.
+            if price is None and i in paired_prices:
+                price = paired_prices[i]
             cat.items.append(MenuItem(name=name, price=price))
         elif sem == "item_description":
             cat = current_cats.get(col) or next(iter(current_cats.values()), None)
