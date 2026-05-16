@@ -1222,6 +1222,9 @@ def _inject_pdf_graphics(
     # and hulu. Claude vision sometimes returns only 1 or 2 of the 3. When we see
     # a collage_box at left-bottom AND at least one inline brand badge, ensure
     # the missing companions are placed inside the panel too.
+    # R22.1: Claude vision sometimes returns NEITHER a collage_box NOR any inline
+    # brand badges — but the "As seen on:" text is reliably there. Synthesize a
+    # virtual panel anchored to that text element when no collage_box was detected.
     _AS_SEEN_ON_BRANDS = ("badge/food_network", "badge/youtube", "badge/hulu")
     panel = None
     for el in graphic_els:
@@ -1232,6 +1235,41 @@ def _inject_pdf_graphics(
             if cx < canvas_w * 0.55 and cy > canvas_h * 0.55:
                 panel = (el, bd)
                 break
+
+    # R22.1: if no collage_box was returned, look for an "As seen on:" text
+    # element in the lower-left and synthesize a virtual panel below it.
+    if panel is None:
+        for _txt in template.elements:
+            if _txt.get("type") != "text":
+                continue
+            _tc = (_txt.get("content") or "").lower().strip()
+            if not (_tc.startswith("as seen on") or _tc.startswith("featured on")):
+                continue
+            _tbd = _txt.get("bbox") or {}
+            _tcx = float(_tbd.get("x", 0)) + float(_tbd.get("w", 0)) / 2
+            _tcy = float(_tbd.get("y", 0)) + float(_tbd.get("h", 0)) / 2
+            if _tcx >= canvas_w * 0.55 or _tcy <= canvas_h * 0.5:
+                continue
+            # Build a synthetic panel below the caption.
+            _syn_x = float(_tbd.get("x", canvas_w * 0.05))
+            _syn_y = float(_tbd.get("y", 0)) + float(_tbd.get("h", 0)) + 10.0
+            _syn_w = max(float(_tbd.get("w", 200)) * 3.0, 360.0)
+            _syn_h = 110.0
+            _syn_bd = {"x": _syn_x, "y": _syn_y, "w": _syn_w, "h": _syn_h}
+            _syn_el = {
+                "id": f"img_aso_synth_panel",
+                "type": "image",
+                "subtype": "collage_box",
+                "semantic_label": None,
+                "bbox": _syn_bd,
+                "provenance": "r22_1_synth_aso_panel",
+            }
+            graphic_els.append(_syn_el)
+            panel = (_syn_el, _syn_bd)
+            print(f"[pipeline] R22.1 synth As-Seen-On panel from caption: "
+                  f"({_syn_x:.0f},{_syn_y:.0f}) {_syn_w:.0f}x{_syn_h:.0f}")
+            break
+
     if panel is not None:
         panel_el, panel_bd = panel
         panel_x = float(panel_bd.get("x", 0))
@@ -1814,7 +1852,15 @@ def process(file_path: str, output_dir: str, file_stem: str = None) -> list[dict
                         cluster_x1 = min(x[0] for x in xs) - 420
                         cluster_x2 = max(x[1] for x in xs) + 30
                         cluster_y1 = min(y[0] for y in ys) - 100
-                        cluster_y2 = max(y[1] for y in ys) + 40
+                        # R22.2: bottom pad +40 → +200. The "HAPPY HOUR" sun-burst
+                        # wordmark is stacked two lines ("HAPPY" top, "HOUR" below)
+                        # but the inner DAILY/3-5PM keyword text only covers the
+                        # top line's y-range. With only +40 the crop stopped just
+                        # below the "HAPPY" line, slicing "HOUR" + the bottom
+                        # border off. +200 captures the full two-line wordmark
+                        # without bleeding into menu items below (badge sits in
+                        # a column where there's no item content directly below).
+                        cluster_y2 = max(y[1] for y in ys) + 200
                         # R19.2: clamp to right half of canvas so the wider
                         # left-pad never captures menu item text in the centre/left.
                         # R21.2: lower clamp from 0.45 → 0.30 of canvas_w.

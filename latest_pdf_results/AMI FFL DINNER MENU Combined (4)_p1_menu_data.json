@@ -68,13 +68,8 @@
         },
         {
           "name": "BABY ARUGULA/BEET SALAD",
-          "description": "baby arugula, goat cheese, walnuts, white balsamic lime vinaigrette",
+          "description": "baby arugula, goat cheese, walnuts, white balsamic lime vinaigrette CHICKEN +12, SHRIMP +15, FISH OF DAY 19",
           "price": "10/15"
-        },
-        {
-          "name": "ADD PROTEIN TO ANY SALAD:",
-          "description": "CHICKEN +12, SHRIMP +15, FISH OF DAY 19",
-          "price": null
         }
       ]
     },
@@ -99,18 +94,13 @@
         },
         {
           "name": "GRILLED CHATEAUBRIAND MP (7OZ) *",
-          "description": "certified black angus center-cut filet of beef, stilton blue cheese potato au gratin, port wine demi reduction, roasted carrot puree",
+          "description": "certified black angus center-cut filet of beef, stilton blue cheese potato au gratin, port wine demi reduction, roasted carrot puree chef's mushrooms or stilton blue cheese crust +$7 ea. add: lobster tail MP / snow crab cluster 1/2 lb +$23 / 1 lb +$44",
           "price": null
         },
         {
-          "name": "ADD ON:",
-          "description": "chef's mushrooms or stilton blue cheese crust +$7 ea. add: lobster tail MP / snow crab cluster 1/2 lb +$23 / 1 lb +$44",
-          "price": null
-        },
-        {
-          "name": "GRILLED DUROC PORK LOIN 34 *",
+          "name": "GRILLED DUROC PORK LOIN",
           "description": "coco espresso chili rub, sautéed spinach, roasted carrot puree",
-          "price": null
+          "price": "34"
         },
         {
           "name": "TRUFFLED WILD MUSHROOM RAVIOLI",
@@ -172,11 +162,6 @@
           "name": "GRILLED LITTLE NECK CLAMS",
           "description": "crispy pancetta, grilled corn, roasted red pepper broth, scallion, cream",
           "price": "18"
-        },
-        {
-          "name": "make it an entree, add pasta+15",
-          "description": null,
-          "price": null
         },
         {
           "name": "SHRIMP COCKTAIL",

@@ -18,8 +18,14 @@ _QUOTED_SHOWNAME_RE = re.compile(r"^[\"“‘'][\w\s&\-,.]{2,40}[\"”’']\s*$"
 # are section labels, not items. Lines with multiple "+N" add-on prices
 # ("grilled chicken +9, shrimp +12, fish of the day 18") are modifier values,
 # not items either.
-_MOD_SUBTITLE_RE = re.compile(r"^(add\s+to\s+any|substitute|sub|extra)\s+[\w\s&\-]+:\s*$", re.I)
+# R22.4: extend to "Add protein to any X:", "ADD ON:", "make it an X, add Y" forms.
+_MOD_SUBTITLE_RE = re.compile(
+    r"^(add\s+(?:to\s+any|protein|on|sides?)|substitute|sub|extra|make\s+it\s+(?:an|a))\b[\w\s&\-,+]*:?\s*$",
+    re.I,
+)
 _MULTI_PLUS_RE = re.compile(r"\+\d+")
+# R22.4: trailing-numeric extraction tolerating " *" / " (...)" / asterisks.
+_TRAILING_PRICE_RE = re.compile(r"^(.*?)\s+(\$?\d{1,3}(?:\.\d{1,2})?)(?:\s*\*+)?\s*$")
 
 
 def _is_footer(text: str) -> bool:
@@ -550,6 +556,9 @@ def _split_name_price(text: str) -> Tuple[str, Optional[str]]:
     '605A '), do NOT treat it as a price. Vintages glued by R8.1 span-merge
     would otherwise be peeled off as bogus prices on every Bordeaux/Burgundy
     entry ('Château Les Pagodes de Cos, St. Estèphe, 2014' → price='2014').
+
+    R22.4: Also accept a trailing " *" or "**" suffix after the price
+    ('GRILLED DUROC PORK LOIN 34 *' → name='GRILLED DUROC PORK LOIN', price='34').
     """
     m = PRICE_TAIL_RE.search(text)
     if m:
@@ -561,4 +570,17 @@ def _split_name_price(text: str) -> Tuple[str, Optional[str]]:
         if is_vintage and looks_wine:
             return text, None
         return text[: m.start()].strip(), candidate
+    # R22.4 fallback: PRICE_TAIL_RE requires the digit at very end. Source
+    # items like "GRILLED DUROC PORK LOIN 34 *" have a trailing asterisk
+    # that prevents the match. Strip asterisks/whitespace and retry.
+    m2 = _TRAILING_PRICE_RE.match(text)
+    if m2:
+        name_part = m2.group(1).strip()
+        price_part = m2.group(2).strip()
+        # Avoid splitting wine vintages here too.
+        digits = price_part.lstrip("$").strip()
+        is_vintage = (digits.isdigit() and len(digits) == 4
+                      and 1900 <= int(digits) <= 2099)
+        if not is_vintage and name_part:
+            return name_part, price_part
     return text, None
