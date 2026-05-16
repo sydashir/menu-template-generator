@@ -585,8 +585,9 @@ def _cleanup_duplicate_graphics(template) -> None:
         # R19.3: narrow exemption — only exempt provenance-tagged synth
         # header flourishes, AND only when there's no body text within 30 px
         # below the ornament (else the swash would slice across an item row).
+        # R23.3: same exemption for source-cropped header ornaments.
         prov = el.get("provenance") or ""
-        if prov == "r19_6_synth_header_flourish":
+        if prov in ("r19_6_synth_header_flourish", "r23_3_header_ornament_crop"):
             el_cy_tmp = _cy(el)
             el_b_tmp = el.get("bbox") or {}
             el_y2_tmp = float(el_b_tmp.get("y", 0)) + float(el_b_tmp.get("h", 0))
@@ -873,48 +874,58 @@ def _synthesize_header_flourishes(template, side_img, canvas_w: int, canvas_h: i
         if _another_header_below(h, max_dy=350):
             continue
 
-        # Pick centered vs left swash by text_align
+        # R23.3: pixel-crop the actual ornament from the source image,
+        # not an S3 generic scroll-divider asset. Source IS the truth.
+        # If the cropped region is empty (pure white), the source has no
+        # flourish under this header and we skip per Golden Rule 1.
+        import base64
+        import io as _io
+
         align = (h.get("style") or {}).get("text_align", "left")
-        slug = "ornament/floral_swash_centered" if align == "center" else "ornament/floral_swash_left"
-        png = resolve_asset(slug)
-        if not png:
+        target_h = 80.0
+        target_w = min(hw * 2.5, max(hw * 1.2, 280.0))
+        if align == "center":
+            crop_x1 = max(0, int(flourish_cx - target_w / 2))
+        elif align == "right":
+            crop_x1 = max(0, int(hx + hw - target_w))
+        else:
+            crop_x1 = max(0, int(hx))
+        crop_x2 = min(canvas_w, crop_x1 + int(target_w))
+        crop_y1 = max(0, int(hy + hh + 8))
+        crop_y2 = min(canvas_h, crop_y1 + int(target_h))
+        if crop_x2 <= crop_x1 + 20 or crop_y2 <= crop_y1 + 8:
+            continue
+        try:
+            _crop_img = side_img.crop((crop_x1, crop_y1, crop_x2, crop_y2)).convert("RGB")
+            # Empty-pixel check: if the crop is >98% white, no ornament present.
+            _pixels = _crop_img.getdata()
+            _total = len(_pixels)
+            if _total == 0:
+                continue
+            _non_white = sum(1 for px in _pixels if px[0] < 240 or px[1] < 240 or px[2] < 240)
+            if _non_white / _total < 0.02:
+                continue
+            _buf = _io.BytesIO()
+            _crop_img.save(_buf, format="PNG")
+        except Exception as _exc:
+            print(f"[pipeline] R23.3 header ornament crop failed for '{h.get('content','?')}': {_exc}")
             continue
 
-        import base64
-        from PIL import Image as _Image
-        import io as _io
-        try:
-            pil = _Image.open(_io.BytesIO(png))
-            aspect = pil.size[0] / max(1, pil.size[1])
-        except Exception:
-            aspect = 6.0
-
-        # R6-3: bump target height 60→100 and add minimum width so short headers
-        # ("FRANCE", w≈80) still get a substantive swash (~280 px). y-offset
-        # raised 14→18 to leave breathing room below the header baseline.
-        target_h = 100.0
-        target_w = target_h * aspect
-        # Cap to ≤ header width × 2.5 or ≥ 280 px floor — gives short headers
-        # a reasonable swash without bleeding across columns for wide headers.
-        target_w = min(target_w, max(hw * 2.5, 280.0))
-        target_h = target_w / aspect
-
         new_el = {
-            "id": f"img_synth_swash_{int(hx)}_{int(hy)}",
+            "id": f"img_hdr_orn_{int(hx)}_{int(hy)}",
             "type": "image",
             "subtype": "ornament",
-            "semantic_label": slug,
-            "provenance": "r19_6_synth_header_flourish",
+            "semantic_label": None,
+            "provenance": "r23_3_header_ornament_crop",
             "bbox": {
-                "x": max(0.0, flourish_cx - target_w / 2),
-                "y": hy + hh + 18,
-                "w": target_w,
-                "h": target_h,
+                "x": float(crop_x1), "y": float(crop_y1),
+                "w": float(crop_x2 - crop_x1), "h": float(crop_y2 - crop_y1),
             },
-            "image_data": base64.b64encode(png).decode(),
+            "image_data": base64.b64encode(_buf.getvalue()).decode(),
         }
         template.elements.append(new_el)
-        print(f"[pipeline] synth header flourish under '{h.get('content','?')}' at y={new_el['bbox']['y']:.0f}")
+        print(f"[pipeline] R23.3 header ornament crop under '{h.get('content','?')}' "
+              f"({crop_x1},{crop_y1}) {crop_x2-crop_x1}×{crop_y2-crop_y1}")
 
 
 def _inject_pdf_graphics(
@@ -1236,9 +1247,13 @@ def _inject_pdf_graphics(
                 panel = (el, bd)
                 break
 
-    # R22.1: if no collage_box was returned, look for an "As seen on:" text
-    # element in the lower-left and synthesize a virtual panel below it.
-    if panel is None:
+    # R23.1: when an "As seen on:" caption sits in the lower-left, pixel-crop
+    # the entire panel region from the source page image and embed it as a
+    # single image element. Source IS the truth — no synth badges, no S3
+    # generics. Runs UNCONDITIONALLY when caption text exists, even if Claude
+    # vision returned a partial collage_box (its bytes are still synth/wrong-
+    # aspect and don't match source pixels).
+    if True:
         for _txt in template.elements:
             if _txt.get("type") != "text":
                 continue
@@ -1250,24 +1265,89 @@ def _inject_pdf_graphics(
             _tcy = float(_tbd.get("y", 0)) + float(_tbd.get("h", 0)) / 2
             if _tcx >= canvas_w * 0.55 or _tcy <= canvas_h * 0.5:
                 continue
-            # Build a synthetic panel below the caption.
-            _syn_x = float(_tbd.get("x", canvas_w * 0.05))
-            _syn_y = float(_tbd.get("y", 0)) + float(_tbd.get("h", 0)) + 10.0
-            _syn_w = max(float(_tbd.get("w", 200)) * 3.0, 360.0)
-            _syn_h = 110.0
-            _syn_bd = {"x": _syn_x, "y": _syn_y, "w": _syn_w, "h": _syn_h}
-            _syn_el = {
-                "id": f"img_aso_synth_panel",
-                "type": "image",
-                "subtype": "collage_box",
-                "semantic_label": None,
-                "bbox": _syn_bd,
-                "provenance": "r22_1_synth_aso_panel",
-            }
-            graphic_els.append(_syn_el)
-            panel = (_syn_el, _syn_bd)
-            print(f"[pipeline] R22.1 synth As-Seen-On panel from caption: "
-                  f"({_syn_x:.0f},{_syn_y:.0f}) {_syn_w:.0f}x{_syn_h:.0f}")
+            # Crop region: from a bit left of caption.x to caption.x + 700,
+            # from caption.y down to caption.y + caption.h + 200 (covers
+            # caption + 3 badges row + show captions below).
+            _cx1 = max(0, int(_tbd.get("x", 0)) - 20)
+            _cy1 = max(0, int(_tbd.get("y", 0)))
+            _cx2 = min(canvas_w, int(_tbd.get("x", 0)) + 700)
+            _cy2 = min(canvas_h, int(_tbd.get("y", 0) + _tbd.get("h", 0)) + 250)
+            if _cx2 <= _cx1 + 50 or _cy2 <= _cy1 + 50:
+                continue
+            try:
+                import hashlib as _hashlib_aso
+                _crop = side_img.crop((_cx1, _cy1, _cx2, _cy2))
+                _buf = io.BytesIO()
+                _crop.convert("RGB").save(_buf, format="PNG")
+                _aso_id = f"img_aso_panel_{_hashlib_aso.md5(f'aso_{_cx1}_{_cy1}'.encode()).hexdigest()[:8]}"
+                _aso_el = {
+                    "id": _aso_id,
+                    "type": "image",
+                    "subtype": "collage_box",
+                    "semantic_label": None,
+                    "bbox": {
+                        "x": float(_cx1), "y": float(_cy1),
+                        "w": float(_cx2 - _cx1), "h": float(_cy2 - _cy1),
+                    },
+                    "image_data": base64.b64encode(_buf.getvalue()).decode(),
+                    "provenance": "r23_1_aso_panel_crop",
+                }
+                graphic_els.append(_aso_el)
+                # R23.1: source crop is now the authoritative As-Seen-On panel.
+                # Drop:
+                #  (a) any other collage_box whose centre is in the lower-left
+                #      zone (Claude often returns the panel at wrong y; the
+                #      synth bytes render as a misplaced colored block);
+                #  (b) any small As-Seen-On brand badge (food_network / hulu /
+                #      youtube < 250 px wide) anywhere in the lower-left zone —
+                #      the source crop already contains the real badge pixels.
+                # Big right-side gray badges (>= 250 px) at x > canvas_w*0.7
+                # are the standalone Food Network "Best Bites" / Diners' Choice
+                # awards — those are SEPARATE elements and stay.
+                _aso_brands = {"badge/food_network", "badge/youtube", "badge/hulu", "badge/best_of"}
+                _ll_x_max = canvas_w * 0.55
+                _ll_y_min = canvas_h * 0.50
+                _kept_graphics = []
+                for _gx in graphic_els:
+                    if _gx is _aso_el:
+                        _kept_graphics.append(_gx)
+                        continue
+                    _gbd = _gx.get("bbox") or {}
+                    _gcx = float(_gbd.get("x", 0)) + float(_gbd.get("w", 0)) / 2
+                    _gcy = float(_gbd.get("y", 0)) + float(_gbd.get("h", 0)) / 2
+                    _gw = float(_gbd.get("w", 0))
+                    _in_ll_zone = (_gcx < _ll_x_max and _gcy > _ll_y_min)
+                    if _in_ll_zone and _gx.get("subtype") == "collage_box":
+                        continue  # supersede any Claude panel in lower-left
+                    if (_in_ll_zone
+                            and _gx.get("subtype") == "badge"
+                            and _gw < 250
+                            and (_gx.get("semantic_label") or "") in _aso_brands):
+                        continue
+                    _kept_graphics.append(_gx)
+                graphic_els[:] = _kept_graphics
+                # Also drop overlapping text elements (R19.9 pattern) so the
+                # crop doesn't double-render with floating text on top.
+                _kept_text = []
+                _txt_dropped = 0
+                for _ex in template.elements:
+                    if _ex.get("type") == "text":
+                        _xb = _ex.get("bbox") or {}
+                        _xcx = float(_xb.get("x", 0)) + float(_xb.get("w", 0)) / 2
+                        _xcy = float(_xb.get("y", 0)) + float(_xb.get("h", 0)) / 2
+                        if _cx1 <= _xcx <= _cx2 and _cy1 <= _xcy <= _cy2:
+                            _txt_dropped += 1
+                            continue
+                    _kept_text.append(_ex)
+                template.elements = _kept_text
+                # Setting panel here ensures R16 / R19.5 panel-resolver paths
+                # below see a panel and skip the synth-brand inject branch.
+                panel = (_aso_el, _aso_el["bbox"])
+                print(f"[pipeline] R23.1 As-Seen-On pixel-crop "
+                      f"({_cx1},{_cy1}) {_cx2-_cx1}×{_cy2-_cy1}"
+                      f" — dropped {_txt_dropped} text spans inside crop")
+            except Exception as _exc:
+                print(f"[pipeline] R23.1 As-Seen-On pixel-crop failed: {_exc}")
             break
 
     if panel is not None:
@@ -1313,7 +1393,11 @@ def _inject_pdf_graphics(
                         break
         except Exception:
             pass
-        if missing and (present_inline or has_aso_text):
+        # R23.1: if the panel is a pixel-cropped source image (provenance
+        # r23_1_aso_panel_crop), skip per-brand badge synth — the crop
+        # already contains the real source pixels for every badge.
+        _is_r23_panel = (panel_el.get("provenance") == "r23_1_aso_panel_crop")
+        if not _is_r23_panel and missing and (present_inline or has_aso_text):
             # R19.5: real row-layout. Allocate one slot per badge across the
             # panel width; centre the badge inside each slot. No more vertical
             # stack with i*5 offsets that overlap when more than one is missing.
