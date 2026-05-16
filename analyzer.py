@@ -14,6 +14,13 @@ _CITY_LIST_RE = re.compile(r"^[A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z]+)*(?:\s*[~\-•�
 _ASO_HEADER_RE = re.compile(r"^(as\s+seen\s+on|featured\s+on)\s*[:\-]?\s*$", re.I)
 _QUOTED_SHOWNAME_RE = re.compile(r"^[\"“‘'][\w\s&\-,.]{2,40}[\"”’']\s*$")
 
+# R20.5: menu-modifier subtitles like "Add to any salad:" / "Substitute Salmon:"
+# are section labels, not items. Lines with multiple "+N" add-on prices
+# ("grilled chicken +9, shrimp +12, fish of the day 18") are modifier values,
+# not items either.
+_MOD_SUBTITLE_RE = re.compile(r"^(add\s+to\s+any|substitute|sub|extra)\s+[\w\s&\-]+:\s*$", re.I)
+_MULTI_PLUS_RE = re.compile(r"\+\d+")
+
 
 def _is_footer(text: str) -> bool:
     t = text.strip()
@@ -22,7 +29,17 @@ def _is_footer(text: str) -> bool:
     # R20.3: panel captions are not items.
     if _ASO_HEADER_RE.match(t) or _QUOTED_SHOWNAME_RE.match(t):
         return True
+    # R20.5: menu-modifier section labels.
+    if _MOD_SUBTITLE_RE.match(t):
+        return True
     return False
+
+
+def _is_menu_modifier(text: str) -> bool:
+    """R20.5: lines with 2+ '+N' tokens are menu modifier values, not items.
+    Example: 'grilled chicken +9, shrimp +12, fish of the day 18'."""
+    t = text.strip()
+    return len(_MULTI_PLUS_RE.findall(t)) >= 2
 
 
 PRICE_RE = re.compile(r"^\$?\s?\d{1,4}(?:[./]\d{1,4})?(?:\.\d{2})?$")
@@ -257,6 +274,13 @@ def _classify(b: RawBlock, max_font: float, header_zone: float, restaurant_assig
     # bold-upper heuristic claims them as items.
     if _is_footer(text):
         return "other_text"
+
+    # R20.5: menu modifier lines ("grilled chicken +9, shrimp +12, ...")
+    # belong as descriptions under the preceding "Add to any X:" subtitle,
+    # not as standalone items. Run BEFORE the PRICE_TAIL_RE / bold path
+    # which would otherwise peel off the trailing number as a price.
+    if _is_menu_modifier(text):
+        return "item_description"
 
     if PHONE_RE.fullmatch(text):
         return "phone"
