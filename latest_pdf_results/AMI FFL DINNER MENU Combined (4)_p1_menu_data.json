@@ -1,7 +1,7 @@
 {
   "source_file": "AMI FFL DINNER MENU Combined (4)",
   "side": "full",
-  "restaurant_name": "The Château Anna Maria",
+  "restaurant_name": "Experience it!",
   "tagline": null,
   "address": "5325 Marina Dr ~ Holmes Beach",
   "phone": "941.238.6264",
@@ -12,7 +12,7 @@
       "items": [
         {
           "name": "CHARCUTERIE & CHEESE BOARD",
-          "description": "appropriate accoutrements",
+          "description": "imported & domestic meats and cheeses, appropriate accoutrements",
           "price": null
         },
         {
@@ -22,7 +22,7 @@
         },
         {
           "name": "SEAFOOD TOWER",
-          "description": "encrusted seared ahi tuna, oysters of the day",
+          "description": "beer spiced poached 1/2 maine lobster, snow crab clusters, jumbo shrimp, sesame seed encrusted seared ahi tuna, oysters of the day",
           "price": null
         },
         {
@@ -53,22 +53,22 @@
         },
         {
           "name": "FRENCH ONION SOUP CUP 12 / BOWL",
-          "description": "broth, crostini, gruyere and parmesan cheese",
+          "description": "slowly simmered caramelized onions, beef broth, crostini, gruyere and parmesan cheese",
           "price": "15"
         },
         {
           "name": "CAESAR SALAD 10 /",
-          "description": "made croutons, caesar dressing",
+          "description": "romaine, shaved parmesan, house made croutons, caesar dressing",
           "price": "15"
         },
         {
           "name": "CLASSIC WEDGE SALAD",
-          "description": "cheese, blue cheese dressing",
+          "description": "iceberg, shaved red onion, cherry tomatoes, bacon, crumbled blue cheese, blue cheese dressing",
           "price": "15"
         },
         {
           "name": "BABY ARUGULA/BEET SALAD",
-          "description": "white balsamic lime vinaigrette",
+          "description": "baby arugula, goat cheese, walnuts, white balsamic lime vinaigrette",
           "price": "10/15"
         },
         {
@@ -89,27 +89,27 @@
       "items": [
         {
           "name": "CHICKEN CORDON BLEU",
-          "description": "breadcrumbs, mashed potatoes, mixed greens",
+          "description": "chicken breast, ham, swiss cheese, panko breadcrumbs, mashed potatoes, mixed greens",
           "price": "34"
         },
         {
           "name": "CHICKEN FRANCESE",
-          "description": "roasted fingerling potatoes, house vegetable",
+          "description": "boneless chicken breast, aged parmesan basil egg-crust, roasted fingerling potatoes, house vegetable",
           "price": "36"
         },
         {
           "name": "CHEF'S CUT MP *",
-          "description": "add: lobster tail MP / snow crab cluster 1/2 lb +$24/ 1 lb +$45",
+          "description": "chef's choice beef, south african spice rub, truffle mashed potatoes add: lobster tail MP / snow crab cluster 1/2 lb +$24/ 1 lb +$45",
           "price": null
         },
         {
           "name": "GRILLED CHATEAUBRIAND MP (7OZ) *",
-          "description": "port wine demi reduction, roasted carrot puree",
+          "description": "certified black angus center-cut filet of beef, stilton blue cheese potato au gratin, port wine demi reduction, roasted carrot puree",
           "price": null
         },
         {
           "name": "ADD ON:",
-          "description": "add: lobster tail MP / snow crab cluster 1/2 lb +$23 / 1 lb +$44",
+          "description": "chef's mushrooms or stilton blue cheese crust +$7 ea. add: lobster tail MP / snow crab cluster 1/2 lb +$23 / 1 lb +$44",
           "price": null
         },
         {
@@ -119,38 +119,28 @@
         },
         {
           "name": "TRUFFLED WILD MUSHROOM RAVIOLI",
-          "description": "add: grilled chicken +$9 shrimp +$12 lobster meat +$15",
+          "description": "farmer's market mushrooms, baby spinach, roasted garlic-white wine beurre blanc, aged parmesan cheese, white truffle add: grilled chicken +$9 shrimp +$12 lobster meat +$15",
           "price": "34"
         },
         {
           "name": "DUCK CONFIT FETTUCCINI",
-          "description": "fettuccini pasta, natural red wine reduction,",
+          "description": "house-made duck confit, chef's select mushrooms, fettuccini pasta, natural red wine reduction,",
           "price": "38"
         },
         {
           "name": "CHILEAN SEA BASS",
-          "description": "basil, chef’s root vegetable salad garnish",
+          "description": "horseradish panko encrusted pan seared sea bass, pea fondue, red wine risotto, braised carrots, macerated basil, chef’s root vegetable salad garnish",
           "price": "53"
         },
         {
           "name": "PAN SEARED SNAPPER",
-          "description": "add: make it a lobster risotto +$15",
+          "description": "lemon buerre blanc, dressed arugula salad, saffron risotto add: make it a lobster risotto +$15",
           "price": "42"
         },
         {
           "name": "MALBEC BRAISED SHORT RIBS",
-          "description": "creamy parmesan farro, roasted baby carrots,",
+          "description": "creamy parmesan farro, roasted baby carrots, 20% gratuity will be added to the bill for parties of 6 or more guests. / $18 split entree fee",
           "price": "44"
-        },
-        {
-          "name": "est.",
-          "description": null,
-          "price": "2013"
-        },
-        {
-          "name": "WWW.CHATEAURESTAURANTS.COM",
-          "description": "20% gratuity will be added to the bill for parties of 6 or more guests. / $18 split entree fee",
-          "price": null
         }
       ]
     },
@@ -170,12 +160,12 @@
         },
         {
           "name": "BEEF CARPACCIO",
-          "description": "saffron aioli, truffle oil, shaved parmesan",
+          "description": "roast heirloom cherry tomato, fried caper, saffron aioli, truffle oil, shaved parmesan",
           "price": "23"
         },
         {
           "name": "NEW ZEALAND LAMB LOLLIPOPS",
-          "description": "noodles, cashew butter",
+          "description": "hoisin glaze, sriracha, chilled soba noodles, cashew butter",
           "price": "23"
         },
         {
@@ -185,7 +175,7 @@
         },
         {
           "name": "GRILLED LITTLE NECK CLAMS",
-          "description": "pepper broth, scallion, cream",
+          "description": "crispy pancetta, grilled corn, roasted red pepper broth, scallion, cream",
           "price": "18"
         },
         {
@@ -195,12 +185,12 @@
         },
         {
           "name": "SHRIMP COCKTAIL",
-          "description": "additional shrimp $4 ea",
+          "description": "three jumbo shrimp, spicy cocktail sauce additional shrimp $4 ea",
           "price": "17"
         },
         {
           "name": "YELLOWFIN TUNA TARTARE",
-          "description": "sweet chili sauce, fried wontons",
+          "description": "fresh avocado, pickled ginger aioli, sweet chili sauce, fried wontons",
           "price": "25"
         },
         {
@@ -263,11 +253,6 @@
           "name": "1/2 LB 24 / 1 LB",
           "description": "anna maria island, FL",
           "price": "45"
-        },
-        {
-          "name": "est.",
-          "description": null,
-          "price": "2020"
         }
       ]
     }

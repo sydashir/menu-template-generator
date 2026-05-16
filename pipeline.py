@@ -87,6 +87,75 @@ def _is_generic_name(name: Optional[str]) -> bool:
     return False
 
 
+def _resolve_as_seen_on_panel(graphic_els: list, canvas_w: int, canvas_h: int) -> None:
+    """
+    R20.1: Lay out As-Seen-On panel badges in a single non-overlapping row inside
+    the collage_box. Run AFTER _apply_s3_natural_bbox so the S3-natural bbox
+    normalization doesn't undo our row layout. Also handles the case where
+    Claude-detected badges arrive without going through R16's inject loop.
+    """
+    panel_bd = None
+    for el in graphic_els:
+        if el.get("type") == "image" and el.get("subtype") == "collage_box":
+            bd = el.get("bbox") or {}
+            cx = float(bd.get("x", 0)) + float(bd.get("w", 0)) / 2
+            cy = float(bd.get("y", 0)) + float(bd.get("h", 0)) / 2
+            if cx < canvas_w * 0.55 and cy > canvas_h * 0.55:
+                panel_bd = bd
+                break
+    if not panel_bd:
+        return
+    panel_x = float(panel_bd.get("x", 0))
+    panel_y = float(panel_bd.get("y", 0))
+    panel_w = float(panel_bd.get("w", 200))
+    panel_h = float(panel_bd.get("h", 200))
+    panel_x2 = panel_x + panel_w
+    panel_y2 = panel_y + panel_h
+
+    _AS_SEEN_ON = ("badge/food_network", "badge/youtube", "badge/hulu", "badge/best_of")
+    _SQUARE = {"badge/food_network", "badge/hulu", "badge/best_of", "badge/opentable_diners_choice"}
+
+    in_panel: list = []
+    for el in graphic_els:
+        if el.get("subtype") != "badge":
+            continue
+        sl = el.get("semantic_label", "") or ""
+        if sl not in _AS_SEEN_ON:
+            continue
+        bd = el.get("bbox") or {}
+        cx_e = float(bd.get("x", 0)) + float(bd.get("w", 0)) / 2
+        cy_e = float(bd.get("y", 0)) + float(bd.get("h", 0)) / 2
+        if panel_x <= cx_e <= panel_x2 and panel_y <= cy_e <= panel_y2:
+            in_panel.append(el)
+
+    if not in_panel:
+        return
+
+    in_panel.sort(key=lambda e: float((e.get("bbox") or {}).get("x", 0)))
+    n = len(in_panel)
+    slot_w = panel_w / n
+
+    for idx, el in enumerate(in_panel):
+        sl = el.get("semantic_label", "") or ""
+        bd = el.get("bbox") or {}
+        if sl in _SQUARE:
+            bd["w"] = 90.0
+            bd["h"] = 90.0
+        else:
+            cur_w = float(bd.get("w", 90)) or 90.0
+            cur_h = float(bd.get("h", 90)) or 90.0
+            asp = cur_w / max(1.0, cur_h)
+            bd["h"] = 90.0
+            bd["w"] = 90.0 * asp
+        bw = float(bd["w"])
+        bh = float(bd["h"])
+        bd["x"] = panel_x + idx * slot_w + (slot_w - bw) / 2
+        bd["y"] = panel_y + (panel_h - bh) / 2
+        el["bbox"] = bd
+        el["provenance"] = "r20_1_aso_resolved"
+        print(f"[pipeline] R20.1 As-Seen-On row: {sl} → ({bd['x']:.0f},{bd['y']:.0f}) {bw:.0f}×{bh:.0f}")
+
+
 def _apply_s3_natural_bbox(
     el: dict,
     asset_bytes: bytes,
@@ -1240,6 +1309,14 @@ def _inject_pdf_graphics(
             el["image_data"] = base64.b64encode(s3_bytes).decode()
             _apply_s3_natural_bbox(el, s3_bytes, canvas_w, canvas_h)
             print(f"[pipeline] PDF S3 asset: {sl}")
+
+    # R20.1: re-resolve As-Seen-On panel badges AFTER the S3 normalize pass so
+    # _apply_s3_natural_bbox doesn't overwrite the row layout set in R19.5/R16.
+    # The panel resolver lays badges in a single row inside the collage_box,
+    # 90×90 for square brands (food_network/hulu/best_of/diners_choice),
+    # natural-aspect@h=90 for youtube. Image_data is already set by the S3
+    # loop above; only bbox is adjusted here.
+    _resolve_as_seen_on_panel(graphic_els, canvas_w, canvas_h)
 
     # Pixel crop for image elements that didn't resolve via S3.
     # Use a tight area cap per subtype:

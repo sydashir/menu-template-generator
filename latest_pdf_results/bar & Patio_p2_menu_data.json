@@ -1,7 +1,7 @@
 {
   "source_file": "bar & Patio",
   "side": "full",
-  "restaurant_name": "The Château Restaurant & Bar",
+  "restaurant_name": "The Chateau Restaurant & Bar",
   "tagline": null,
   "address": null,
   "phone": null,
@@ -58,17 +58,17 @@
       "items": [
         {
           "name": "ALL AMERICAN BURGER",
-          "description": "lettuce, tomato and onion on brioche bun",
+          "description": "half-pound beef burger, american cheese, lettuce, tomato and onion on brioche bun",
           "price": "18"
         },
         {
           "name": "TURKEY BACON CLUB",
-          "description": "choice of white or wheat bread",
+          "description": "turkey, bacon, avocado, lettuce, tomato, mayo. choice of white or wheat bread",
           "price": "17"
         },
         {
           "name": "BLACKENED MAHI SANDWICH",
-          "description": "20% gratuity will be added to the bill for parties of 8 or more guests. / $18 split entrée fee",
+          "description": "blackened mahi, pepper jack cheese, cajun remoulade, lettuce, tomato, brioche bun Warning- Consuming raw or undercooked meats, poultry, seafood, shellfish or eggs may increase your risk of food borne illness, especially if you have a medical condition 20% gratuity will be added to the bill for parties of 8 or more guests. / $18 split entrée fee",
           "price": "20"
         }
       ]

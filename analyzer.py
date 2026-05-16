@@ -484,9 +484,26 @@ def build_menu_data(
     )
 
 
+_WINE_CODE_PREFIX_RE = re.compile(r"^\d{2,4}[A-Z]?\s+")
+
+
 def _split_name_price(text: str) -> Tuple[str, Optional[str]]:
-    """Split 'ITEM NAME     21' or 'ITEM NAME     21/18' into (name, price)."""
+    """Split 'ITEM NAME     21' or 'ITEM NAME     21/18' into (name, price).
+
+    R20.2: When the trailing number is a 4-digit wine vintage (1900-2099) and
+    the line looks like a wine entry (vocab match OR wine-code prefix like
+    '605A '), do NOT treat it as a price. Vintages glued by R8.1 span-merge
+    would otherwise be peeled off as bogus prices on every Bordeaux/Burgundy
+    entry ('Château Les Pagodes de Cos, St. Estèphe, 2014' → price='2014').
+    """
     m = PRICE_TAIL_RE.search(text)
     if m:
-        return text[: m.start()].strip(), m.group(1).strip()
+        candidate = m.group(1).strip()
+        digits = candidate.lstrip("$").strip()
+        is_vintage = (digits.isdigit() and len(digits) == 4
+                      and 1900 <= int(digits) <= 2099)
+        looks_wine = _looks_like_wine_entry(text) or bool(_WINE_CODE_PREFIX_RE.match(text))
+        if is_vintage and looks_wine:
+            return text, None
+        return text[: m.start()].strip(), candidate
     return text, None

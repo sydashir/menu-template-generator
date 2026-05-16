@@ -1,7 +1,7 @@
 {
   "source_file": "AMI BRUNCH 2022",
   "side": "full",
-  "restaurant_name": "The Chateau Anna Maria",
+  "restaurant_name": "The Château Anna Maria",
   "tagline": null,
   "address": null,
   "phone": null,
@@ -22,12 +22,12 @@
         },
         {
           "name": "THE CHATEAU BREAKFAST",
-          "description": "home fries, choice of toast",
+          "description": "two eggs cooked to your preference, bacon, sausage, home fries, choice of toast",
           "price": "15"
         },
         {
           "name": "B>Y>O OMELET",
-          "description": "Add .50 each for bacon, ham or sausage and each",
+          "description": "pick 3 (bell pepper, onion, bacon, swiss cheese, spinach, tomato. cheddar cheese, sausage, ham, mushroom. Add .50 each for bacon, ham or sausage and each",
           "price": "15"
         },
         {
@@ -53,22 +53,22 @@
       "items": [
         {
           "name": "GRILLED CHICKEN CAPRESE",
-          "description": "roasted heirloom tomatoes, fresh mozzarella, baby",
+          "description": "balsamic marinated chicken breast, basil pesto, roasted heirloom tomatoes, fresh mozzarella, baby",
           "price": "17"
         },
         {
           "name": "ALL AMERICAN BURGER",
-          "description": "tomato, and onion, brioche bun",
+          "description": "half-pound beef burger, american cheese, lettuce, tomato, and onion, brioche bun",
           "price": "17"
         },
         {
           "name": "TURKEY CLUB SANDWICH",
-          "description": "bacon, avocado, iceberg lettuce, tomato",
+          "description": "fresh baked turkey, white or wheat bread, mayo, crispy bacon, avocado, iceberg lettuce, tomato",
           "price": "16"
         },
         {
           "name": "LOBSTER MAC & CHEESE",
-          "description": "sauce, truffle essences, basil-infused bread crumbs",
+          "description": "maine lobster meat, penne pasta, aged asiago cream sauce, truffle essences, basil-infused bread crumbs",
           "price": "22"
         },
         {
@@ -83,7 +83,7 @@
         },
         {
           "name": "GRILLED PORTOBELLO PANINI",
-          "description": "baby spinach, herb goat cheese spread, balsamic glaze",
+          "description": "balsamic marinated portobello mushroom, wilted baby spinach, herb goat cheese spread, balsamic glaze",
           "price": "17"
         }
       ]
@@ -94,12 +94,12 @@
       "items": [
         {
           "name": "ARUGULA ROAST BEET SALAD",
-          "description": "balsamic lime vinaigrette",
+          "description": "baby arugula, herb goat cheese, walnuts, white balsamic lime vinaigrette",
           "price": "14"
         },
         {
           "name": "CHATEAU CAESAR SALAD",
-          "description": "tuile, roasted garlic anchovy aioli, bacon lardons",
+          "description": "baby romaine, poached farm-raised egg, parmesan tuile, roasted garlic anchovy aioli, bacon lardons",
           "price": "13"
         },
         {
@@ -111,16 +111,6 @@
           "name": "grilled chicken +9 , shrimp +12, fish of the day",
           "description": null,
           "price": "18"
-        },
-        {
-          "name": "WWW.CHATEAURESTAURANTS.COM 941.238.6264",
-          "description": null,
-          "price": null
-        },
-        {
-          "name": "SARASOTA ~ ANNA MARIA ~ BOLTON LANDING",
-          "description": null,
-          "price": null
         }
       ]
     },
@@ -205,7 +195,7 @@
         },
         {
           "name": "toast GF",
-          "description": "20% gratuity added to bill for parties of 8 or more guests.",
+          "description": "**Warning** Consuming raw or undercooked meats, poultry, seafood, shellfish or eggs may increase your risk of food borne illness, especially if you have a medical condition 20% gratuity added to bill for parties of 8 or more guests.",
           "price": "5"
         }
       ]

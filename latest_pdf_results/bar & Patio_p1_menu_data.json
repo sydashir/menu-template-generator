@@ -1,7 +1,7 @@
 {
   "source_file": "bar & Patio",
   "side": "full",
-  "restaurant_name": "The Chateau Restaurant & Bar",
+  "restaurant_name": "The Château Restaurant & Bar",
   "tagline": null,
   "address": null,
   "phone": null,
@@ -17,7 +17,7 @@
         },
         {
           "name": "SHRIMP COCKTAIL*",
-          "description": "choice: buffalo, bbq, or garlic parmesan",
+          "description": "bone in wings, celery, ranch three jumbo shrimp, spicy cocktail sauce choice: buffalo, bbq, or garlic parmesan",
           "price": "17"
         },
         {
@@ -27,7 +27,7 @@
         },
         {
           "name": "CHICKEN TENDERS",
-          "description": "saffron aioli, truffle oil, shaved parmesan",
+          "description": "roasted heirloom tomatoes, fried capers, saffron aioli, truffle oil, shaved parmesan",
           "price": "14"
         },
         {
@@ -37,7 +37,7 @@
         },
         {
           "name": "NEW ZEALAND LAMB LOLLIPOPS",
-          "description": "hoisin glaze, chilled soba noodles, cashew butter",
+          "description": "served with Jen’s plum tomato sauce hoisin glaze, chilled soba noodles, cashew butter",
           "price": "21"
         },
         {
@@ -47,7 +47,7 @@
         },
         {
           "name": "COCONUT CRUNCHY SHRIMP*",
-          "description": "hand breaded jumbo shrimp, sweet chili sauce",
+          "description": "served with cajun remoulade hand breaded jumbo shrimp, sweet chili sauce",
           "price": "18"
         },
         {
@@ -84,7 +84,7 @@
         },
         {
           "name": "ROMA WHITE •",
-          "description": ": spicy soppressata +2",
+          "description": "Jen’s family recipe plum tomato sauce, mozzarella, mozzarella, ricotta, grated parmesan cheese, olive oil : spicy soppressata +2",
           "price": "$18"
         },
         {
@@ -94,7 +94,7 @@
         },
         {
           "name": "PEPPERONI •",
-          "description": "Jen’s family recipe plum tomato sauce, mozzarella,",
+          "description": "maine lobster, cream alfredo, chives, white cheddar Jen’s family recipe plum tomato sauce, mozzarella,",
           "price": "$18"
         },
         {
@@ -104,7 +104,7 @@
         },
         {
           "name": "MUSHROOM •",
-          "description": "Jen’s family recipe plum tomato sauce, mozzarella,",
+          "description": "prosciutto, lemon/olive oil/sea salt tossed arugula Jen’s family recipe plum tomato sauce, mozzarella,",
           "price": "$18"
         },
         {
@@ -119,13 +119,8 @@
         },
         {
           "name": "MARGHERITA •",
-          "description": "mozzarella, fresh tomatoes, fresh basil",
+          "description": "Jen’s family recipe plum tomato sauce, fresh mozzarella, fresh tomatoes, fresh basil",
           "price": "$18"
-        },
-        {
-          "name": "941. 238. 6264 ~ WWW.CHATEAURESTAURANTS.COM",
-          "description": null,
-          "price": null
         }
       ]
     }
