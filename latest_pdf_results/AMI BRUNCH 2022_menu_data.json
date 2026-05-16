@@ -1,0 +1,198 @@
+{
+  "source_file": "AMI BRUNCH 2022",
+  "side": "full",
+  "restaurant_name": "The Château Anna Maria",
+  "tagline": null,
+  "address": null,
+  "phone": null,
+  "categories": [
+    {
+      "name": "Breakfast",
+      "column": 0,
+      "items": [
+        {
+          "name": "CRAB CAKE BENEDICT / CLASSIC",
+          "description": "caribbean style crab cake, poached eggs, hollandaise, grilled ciabatta",
+          "price": "21/18"
+        },
+        {
+          "name": "LOBSTER FRITTATA",
+          "description": "maine lobster meat, scallion, potato, hollandaise, bell peppers, microgreens",
+          "price": "24"
+        },
+        {
+          "name": "THE CHATEAU BREAKFAST",
+          "description": "two eggs cooked to your preference, bacon, sausage, home fries, choice of toast",
+          "price": "15"
+        },
+        {
+          "name": "B>Y>O OMELET",
+          "description": "pick 3 (bell pepper, onion, bacon, swiss cheese, spinach, tomato. cheddar cheese, sausage, ham, mushroom. Add .50 each for bacon, ham or sausage and each additional topping",
+          "price": "15"
+        },
+        {
+          "name": "FRENCH TOAST",
+          "description": "french baguette, warm maple syrup, fresh berries, powdered sugar",
+          "price": "16"
+        },
+        {
+          "name": "CRÈME BRÛLÉE PANCAKES/ PLAIN",
+          "description": "2 fluffy pancakes, pastry crème, brûléed sugar, berry compote",
+          "price": "18/15"
+        },
+        {
+          "name": "BELGIAN WAFFLE",
+          "description": "simple and yummy add fresh berries +7",
+          "price": "16"
+        }
+      ]
+    },
+    {
+      "name": "Lunch",
+      "column": 1,
+      "items": [
+        {
+          "name": "GRILLED CHICKEN CAPRESE",
+          "description": "balsamic marinated chicken breast, basil pesto, roasted heirloom tomatoes, fresh mozzarella, baby spinach",
+          "price": "17"
+        },
+        {
+          "name": "ALL AMERICAN BURGER",
+          "description": "half-pound beef burger, american cheese, lettuce, tomato, and onion, brioche bun",
+          "price": "17"
+        },
+        {
+          "name": "TURKEY CLUB SANDWICH",
+          "description": "fresh baked turkey, white or wheat bread, mayo, crispy bacon, avocado, iceberg lettuce, tomato",
+          "price": "16"
+        },
+        {
+          "name": "LOBSTER MAC & CHEESE",
+          "description": "maine lobster meat, penne pasta, aged asiago cream sauce, truffle essences, basil-infused bread crumbs",
+          "price": "22"
+        },
+        {
+          "name": "CROQUE MONSIEUR",
+          "description": "thin-sliced turkey, swiss cheese, fried egg, brûléed aged parmesan",
+          "price": "18"
+        },
+        {
+          "name": "TURKEY BRIE SANDWICH",
+          "description": "fresh baked turkey, brie cheese, raspberry sauce, grilled bread",
+          "price": "18"
+        },
+        {
+          "name": "GRILLED PORTOBELLO PANINI",
+          "description": "balsamic marinated portobello mushroom, wilted baby spinach, herb goat cheese spread, balsamic glaze",
+          "price": "17"
+        }
+      ]
+    },
+    {
+      "name": "Salads",
+      "column": 0,
+      "items": [
+        {
+          "name": "ARUGULA ROAST BEET SALAD",
+          "description": "baby arugula, herb goat cheese, walnuts, white balsamic lime vinaigrette",
+          "price": "14"
+        },
+        {
+          "name": "CHATEAU CAESAR SALAD",
+          "description": "baby romaine, poached farm-raised egg, parmesan tuile, roasted garlic anchovy aioli, bacon lardons grilled chicken +9 , shrimp +12, fish of the day 18",
+          "price": "13"
+        }
+      ]
+    },
+    {
+      "name": "Add On",
+      "column": 1,
+      "items": [
+        {
+          "name": "coffee/tea",
+          "description": null,
+          "price": "3"
+        },
+        {
+          "name": "pancake (1)",
+          "description": null,
+          "price": "7"
+        },
+        {
+          "name": "orange juice",
+          "description": null,
+          "price": "4"
+        },
+        {
+          "name": "french toast (1)",
+          "description": null,
+          "price": "7"
+        },
+        {
+          "name": "apple juice",
+          "description": null,
+          "price": "3"
+        },
+        {
+          "name": "bacon (4)",
+          "description": null,
+          "price": "8"
+        },
+        {
+          "name": "cappuccino",
+          "description": null,
+          "price": "7"
+        },
+        {
+          "name": "sausage (2)",
+          "description": null,
+          "price": "7"
+        },
+        {
+          "name": "latte",
+          "description": null,
+          "price": "7"
+        },
+        {
+          "name": "home fries",
+          "description": null,
+          "price": "7"
+        },
+        {
+          "name": "espresso",
+          "description": null,
+          "price": "4.50"
+        },
+        {
+          "name": "hand-cut fries",
+          "description": null,
+          "price": "8"
+        },
+        {
+          "name": "unsweet iced tea",
+          "description": null,
+          "price": "3"
+        },
+        {
+          "name": "toast",
+          "description": null,
+          "price": "3"
+        },
+        {
+          "name": "soda",
+          "description": null,
+          "price": "3.50"
+        },
+        {
+          "name": "toast GF",
+          "description": "**Warning** Consuming raw or undercooked meats, poultry, seafood, shellfish or eggs may increase your risk of food borne illness, especially if you have a medical condition 20% gratuity added to bill for parties of 8 or more guests.",
+          "price": "5"
+        }
+      ]
+    }
+  ],
+  "logo_detected": true,
+  "num_separators": 1,
+  "num_columns": 2,
+  "layout_notes": "2-column layout, 4 sections detected."
+}

@@ -198,26 +198,82 @@ def extract_blocks_pdf(file_path: str) -> List[List[RawBlock]]:
             if block["type"] != 0:  # skip image blocks
                 continue
             for line in block["lines"]:
-                for span in line["spans"]:
-                    text = _normalize_spaced(span["text"].strip())
+                # MERGE spans within a single PyMuPDF "line" into one RawBlock
+                # when they share font + size. Some PDFs (e.g. URLs with custom
+                # letter-spacing in AMI BRUNCH 2022) emit one span per character
+                # which would otherwise become 70 single-letter elements.
+                line_spans = [s for s in line.get("spans", []) if s.get("text", "").strip()]
+                if not line_spans:
+                    continue
+
+                groups: list[list[dict]] = []
+                for span in line_spans:
+                    if not groups:
+                        groups.append([span])
+                        continue
+                    last = groups[-1][-1]
+                    same_font = span.get("font") == last.get("font")
+                    same_size = abs(float(span.get("size", 0)) - float(last.get("size", 0))) < 0.5
+                    # Spans are emitted left-to-right within a line; require
+                    # spatial proximity to avoid gluing distinct words across a
+                    # tab or large gap.
+                    last_right = last["bbox"][2]
+                    this_left = span["bbox"][0]
+                    avg_size = max(1.0, (float(span.get("size", 0)) + float(last.get("size", 0))) / 2)
+                    same_color = span.get("color") == last.get("color")
+                    if (
+                        same_font and same_size and same_color
+                        and (this_left - last_right) < avg_size * 1.5
+                    ):
+                        groups[-1].append(span)
+                    else:
+                        groups.append([span])
+
+                for group in groups:
+                    # If every span is a single char/glyph, concatenate without
+                    # spaces. Insert a space where the spatial gap between
+                    # consecutive chars is wider than the average glyph width
+                    # — that's how source-PDF letter-spacing renders a word break.
+                    all_short = all(len(s["text"].strip()) <= 1 for s in group)
+                    if all_short:
+                        # Estimate average glyph width from the group
+                        widths = [s["bbox"][2] - s["bbox"][0] for s in group if (s["bbox"][2] - s["bbox"][0]) > 0]
+                        avg_w = (sum(widths) / len(widths)) if widths else 10.0
+                        parts: list[str] = []
+                        for i, s in enumerate(group):
+                            if i > 0:
+                                gap = s["bbox"][0] - group[i - 1]["bbox"][2]
+                                if gap > avg_w * 0.6:
+                                    parts.append(" ")
+                            parts.append(s["text"])
+                        text = "".join(parts).strip()
+                    else:
+                        text = " ".join(s["text"].strip() for s in group).strip()
+                    # Final pass: collapse spaced-out runs like "9 : 0 0 A M".
+                    text = _normalize_spaced(text)
+                    text = re.sub(r"\s+", " ", text).strip()
                     if not text:
                         continue
-                    r = span["bbox"]
-                    raw_font = span["font"]
+                    head, tail = group[0], group[-1]
+                    raw_font = head["font"]
+                    bx0 = head["bbox"][0]
+                    by0 = min(s["bbox"][1] for s in group)
+                    bx1 = tail["bbox"][2]
+                    by1 = max(s["bbox"][3] for s in group)
                     blocks.append(RawBlock(
                         text=text,
-                        x=r[0] * scale,
-                        y=r[1] * scale,
-                        w=(r[2] - r[0]) * scale,
-                        h=(r[3] - r[1]) * scale,
-                        font_size=span["size"] * scale,
-                        is_bold=(bool(span.get("flags", 0) & 16)
+                        x=bx0 * scale,
+                        y=by0 * scale,
+                        w=(bx1 - bx0) * scale,
+                        h=(by1 - by0) * scale,
+                        font_size=head["size"] * scale,
+                        is_bold=(bool(head.get("flags", 0) & 16)
                              or bool(re.search(r'bold|black|heavy|demi|semibold|extrabold',
                                                raw_font, re.I))),
                         is_italic="Italic" in raw_font or "italic" in raw_font,
                         font_family=_map_font_family(raw_font),
                         font_family_raw=_clean_font_name(raw_font),
-                        color=_span_color_to_hex(span.get("color", 0)),
+                        color=_span_color_to_hex(head.get("color", 0)),
                         page=page_idx,
                         source="pdf",
                     ))

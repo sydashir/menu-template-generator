@@ -16,12 +16,54 @@ venv/
 
 # Secrets / local config
 .claude/
+.superpowers/
+.todos/
+.agents/
 
-# Generated outputs
+# Generated pipeline outputs (regenerable)
 outputs/
 outputs_test/
 test_results/
 gemini_tests/
+
+# Dev render/snapshot scratchpads (regenerable via render_snapshot.py /
+# render_compare.py). The curated showcase set lives in latest_pdf_results/.
+compares/
+snapshots/
+source_renders/
+
+# Iteration logs / session notes — not part of the shippable tool
+FIX-LOG.md
+SESSION-COMPLETE-CONTEXT.md
+SESSION_NOTES.md
+SESSION_NOTES_S4.md
+SESSION_APR21.md
+DECORATOR-PLACEMENT-ROOT-CAUSE.md
+DECORATOR-PLACEMENT-ROUND2.md
+MENUDATA-ROUND3.md
+QA-REPORT.md
+QA-REPORT-R2.md
+QA-REPORT-R3.md
+R7-A-MULTILOGO.md
+R7-B-RENDERER-AUDIT.md
+R7-C-BIG-BADGES.md
+R7-D-IMAGE-PATH.md
+R7-FINAL-REPORT.md
+R8-R11-ITERATION-LOG.md
+R19-QA-LOG.md
+R19-RESEARCH.md
+R20-OBSERVATIONS.md
+R21-RESIDUALS.md
+RENDERER-GAPS.md
+GEMINI_CONTEXT.md
+DEPLOYMENT_NOTES.md
+context.md
+latest_context.md
+PROGRESS.md
+plannings.md
+surya.md
+Copy of *.md
+*.docx
 
 # Old/versioned dev files
 builder_new.py
@@ -42,22 +84,23 @@ run_test_SRQ_2.py
 verify_masking.py
 verify_masking_ami.py
 test_images.py
-
-# Notes / context docs
-context.md
-latest_context.md
-PROGRESS.md
-SESSION_NOTES.md
-SESSION_NOTES_S4.md
-SESSION_APR21.md
-plannings.md
-surya.md
-Copy of *.md
-*.docx
-.agents/
-
-# Dev requirements (use requirements-prod.txt)
-requirements.txt
+debug_opencv.py
+opencv_debug.png
+fix_claude_extractor.py
+fix_syntax.py
+gemini_extractor.py
+update_claude_extractor.py
+test_anthropic_api.py
+test_anthropic_key.py
+test_fixes_logic.py
+test_full_system.py
+test_gemini.py
+test_gemini_v2.py
+test_hybrid_logic.py
+test_key_v2.py
+test_key_v3.py
+test_key_v4.py
+test_on_ami.py
 
 # Large assets
 Menu Template/

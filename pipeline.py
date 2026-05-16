@@ -6,6 +6,7 @@ Called by both the FastAPI app and any direct script usage.
 import base64
 import io
 import json
+import re
 from pathlib import Path
 from typing import Optional
 
@@ -36,6 +37,180 @@ from s3_asset_library import resolve_asset
 
 SUPPORTED_PDF = {".pdf"}
 SUPPORTED_IMG = {".jpg", ".jpeg", ".png", ".webp"}
+
+# R3-1 follow-up: generic section/page-title words that should never be used as
+# `restaurant_name` — applied symmetrically to BOTH the analyzer's pick and
+# Claude vision's pick. Compared lowercase.
+_GENERIC_TITLE_WORDS = {
+    "brunch", "lunch", "dinner", "menu", "dinner menu", "brunch menu",
+    "wine list", "white wines", "red wines", "le premier menu",
+    "patio & bar menu", "sparkling wine", "rosé", "rose",
+    # R4 additions: page-title placeholders that Claude vision returns when a
+    # single page lacks the actual restaurant brand (wine pages, food-only pages, etc.).
+    "wine menu", "food menu", "drinks menu", "cocktail menu",
+}
+
+
+def _is_generic_name(name: Optional[str]) -> bool:
+    """Return True if `name` looks like a menu title / section header rather than a restaurant brand.
+
+    R5-B: extends the exact-match `_GENERIC_TITLE_WORDS` set with two pattern
+    rules — (a) the string contains the standalone word "menu" or "list",
+    (b) the string contains 2+ wine-list / drink-section tokens. Closes the
+    "White Wines / Red Wines Wine Menu" edge case where Claude vision returns
+    a compound page-title for a wine list.
+    """
+    if not name:
+        return True
+    lc = name.strip().lower()
+    if not lc:
+        return True
+    # Exact match against the curated set (covers "brunch", "wine menu", etc.)
+    if lc in _GENERIC_TITLE_WORDS:
+        return True
+    # Placeholder / unknown sentinels Claude sometimes returns instead of a real name.
+    if lc in {"<unknown>", "unknown", "n/a", "na", "none", "null", "tbd", "tbc"}:
+        return True
+    # Stripped placeholders like "Unknown" or "<UNKNOWN>" surrounded by punctuation
+    if re.sub(r"[^a-z]", "", lc) in {"unknown", "na", "none", "null", "tbd", "tbc"}:
+        return True
+    # Contains the word "menu" or "list" as a standalone token
+    if re.search(r"\bmenu\b|\blist\b", lc):
+        return True
+    # Contains 2+ wine-list / section-title tokens
+    wine_token_count = len(re.findall(
+        r"\b(wine|wines|reds?|whites?|sparkling|rosé|rose|champagne|sake|beer|cocktails?)\b",
+        lc,
+    ))
+    if wine_token_count >= 2:
+        return True
+    return False
+
+
+def _resolve_as_seen_on_panel(graphic_els: list, canvas_w: int, canvas_h: int, text_els: Optional[list] = None) -> None:
+    """
+    R20.1: Lay out As-Seen-On panel badges in a single non-overlapping row inside
+    the collage_box. Run AFTER _apply_s3_natural_bbox so the S3-natural bbox
+    normalization doesn't undo our row layout.
+
+    R21.1: Anchor the row to the actual "As seen on:" text element, not whatever
+    Y the collage_box was detected at. Claude vision's collage_box bbox for the
+    Château family routinely lands ~800 px above the real panel (mid-page
+    instead of bottom). The caption text is a stable, accurate anchor.
+    """
+    _AS_SEEN_ON = ("badge/food_network", "badge/youtube", "badge/hulu", "badge/best_of")
+    _SQUARE = {"badge/food_network", "badge/hulu", "badge/best_of", "badge/opentable_diners_choice"}
+
+    # R21.1: prefer the "As seen on:" text element as the anchor.
+    text_anchor = None
+    if text_els:
+        for el in text_els:
+            if el.get("type") != "text":
+                continue
+            c = (el.get("content") or "").lower().strip()
+            if c.startswith("as seen on") or c.startswith("featured on"):
+                tb = el.get("bbox") or {}
+                tcx = float(tb.get("x", 0)) + float(tb.get("w", 0)) / 2
+                if tcx < canvas_w * 0.55:  # left half only
+                    text_anchor = tb
+                    break
+
+    panel_bd = None
+    for el in graphic_els:
+        if el.get("type") == "image" and el.get("subtype") == "collage_box":
+            bd = el.get("bbox") or {}
+            cx = float(bd.get("x", 0)) + float(bd.get("w", 0)) / 2
+            cy = float(bd.get("y", 0)) + float(bd.get("h", 0)) / 2
+            if cx < canvas_w * 0.55 and cy > canvas_h * 0.55:
+                panel_bd = bd
+                break
+
+    # If we have neither a panel nor a text anchor, nothing to do.
+    if not panel_bd and not text_anchor:
+        return
+
+    if text_anchor is not None:
+        # Anchor row to caption text. Lay badges in a row 20 px BELOW the caption.
+        panel_x = float(text_anchor.get("x", canvas_w * 0.05))
+        panel_y = float(text_anchor.get("y", 0)) + float(text_anchor.get("h", 0)) + 20.0
+        panel_w = max(float(text_anchor.get("w", 200)) * 3.0, 360.0)  # wide enough for 3+ badges
+        panel_h = 110.0
+        # Snap collage_box bbox to anchor area too so downstream renderers
+        # don't draw an empty panel rectangle in the wrong place.
+        if panel_bd is not None:
+            panel_bd["x"] = panel_x - 10
+            panel_bd["y"] = panel_y - 10
+            panel_bd["w"] = panel_w + 20
+            panel_bd["h"] = panel_h + 20
+    else:
+        panel_x = float(panel_bd.get("x", 0))
+        panel_y = float(panel_bd.get("y", 0))
+        panel_w = float(panel_bd.get("w", 200))
+        panel_h = float(panel_bd.get("h", 200))
+    panel_x2 = panel_x + panel_w
+    panel_y2 = panel_y + panel_h
+
+    # Collect badges. With text_anchor we accept any As-Seen-On brand regardless
+    # of its current bbox (it'll be moved into the row). Without, we still
+    # require centre-in-panel.
+    in_panel: list = []
+    for el in graphic_els:
+        if el.get("subtype") != "badge":
+            continue
+        sl = el.get("semantic_label", "") or ""
+        if sl not in _AS_SEEN_ON:
+            continue
+        bd = el.get("bbox") or {}
+        cx_e = float(bd.get("x", 0)) + float(bd.get("w", 0)) / 2
+        cy_e = float(bd.get("y", 0)) + float(bd.get("h", 0)) / 2
+        # Big right-side badges (food_network ≥ 300×300 at x > canvas_w*0.7) are
+        # not As-Seen-On panel members — they're the standalone gray "Best of"
+        # show badges. Skip them.
+        bw_chk = float(bd.get("w", 0))
+        if bw_chk >= 250 and cx_e > canvas_w * 0.7:
+            continue
+        if text_anchor is not None:
+            in_panel.append(el)  # claim all small ASO brands
+        else:
+            if panel_x <= cx_e <= panel_x2 and panel_y <= cy_e <= panel_y2:
+                in_panel.append(el)
+
+    if not in_panel:
+        return
+
+    # Dedup by semantic_label (keep first occurrence).
+    seen_labels = set()
+    deduped = []
+    for el in in_panel:
+        sl = el.get("semantic_label", "") or ""
+        if sl in seen_labels:
+            continue
+        seen_labels.add(sl)
+        deduped.append(el)
+    in_panel = deduped
+
+    n = len(in_panel)
+    slot_w = panel_w / n
+
+    for idx, el in enumerate(in_panel):
+        sl = el.get("semantic_label", "") or ""
+        bd = el.get("bbox") or {}
+        if sl in _SQUARE:
+            bd["w"] = 90.0
+            bd["h"] = 90.0
+        else:
+            cur_w = float(bd.get("w", 90)) or 90.0
+            cur_h = float(bd.get("h", 90)) or 90.0
+            asp = cur_w / max(1.0, cur_h)
+            bd["h"] = 90.0
+            bd["w"] = 90.0 * asp
+        bw = float(bd["w"])
+        bh = float(bd["h"])
+        bd["x"] = panel_x + idx * slot_w + (slot_w - bw) / 2
+        bd["y"] = panel_y + (panel_h - bh) / 2
+        el["bbox"] = bd
+        el["provenance"] = "r21_1_aso_text_anchored" if text_anchor else "r20_1_aso_resolved"
+        print(f"[pipeline] {'R21.1' if text_anchor else 'R20.1'} As-Seen-On row: {sl} → ({bd['x']:.0f},{bd['y']:.0f}) {bw:.0f}×{bh:.0f}")
 
 
 def _apply_s3_natural_bbox(
@@ -73,7 +248,20 @@ def _apply_s3_natural_bbox(
     el_sub = el.get("subtype", "")
 
     if el_type == "image" and el_sub == "badge":
-        target_h = 130.0 if aspect < 1.5 else 90.0
+        # R7-C: big brand badges (Food Network / Diners' Choice) that landed in
+        # the lower brand zone (after snap) get a larger 200 px target height —
+        # the lower-zone placements correspond to the big gray circular variants,
+        # not the small inline icons.
+        # Big gray brand badges live in the BOTTOM RIGHT corner of the canvas
+        # (typically x > 60% canvas_w AND y > 60% canvas_h). The small inline
+        # icons inside an "As Seen On" collage_box live on the LEFT side. Both
+        # carry the same semantic_label so we discriminate by position only.
+        is_brand_badge = (
+            sl in ("badge/food_network", "badge/opentable_diners_choice")
+            and cy > canvas_h * 0.6
+            and cx > canvas_w * 0.55
+        )
+        target_h = 200.0 if is_brand_badge else (130.0 if aspect < 1.5 else 90.0)
         target_w = round(target_h * aspect)
         target_h = round(target_h)
 
@@ -115,6 +303,7 @@ def _apply_s3_natural_bbox(
     bd["y"] = min(bd["y"], max(0.0, float(canvas_h) - bd["h"]))
 
 
+# DEPRECATED (Fix 2): second decorator scan removed from the main flow because it re-injects ornaments after cleanup with weak text-overlap validation. Kept for reference.
 def _scan_pdf_decorators_via_claude(
     img: Image.Image,
     existing_elements: list,
@@ -260,10 +449,20 @@ def _enrich_template_separators_from_claude(
 
     Mutates template.elements in-place.
     """
+    # Only consider Claude elements that are themselves separator-type or labelled
+    # as separator/ornament.  Skip collage_box elements explicitly — those are
+    # multi-logo panels, not decorative dividers, and copying their semantic_label
+    # onto a thin PDF separator was producing 660×44 panels with ornament/* labels.
     claude_decoratives = [
         e for e in claude_layout.get("elements", [])
         if e.get("semantic_label")
-        and (e.get("type") in ("separator", "image"))
+        and e.get("subtype") != "collage_box"
+        and (
+            e.get("type") == "separator"
+            or (e.get("type") == "image" and (
+                (e.get("semantic_label") or "").startswith(("separator/", "ornament/"))
+            ))
+        )
         and (
             e["semantic_label"].startswith("separator/")
             or e["semantic_label"].startswith("ornament/")
@@ -272,8 +471,8 @@ def _enrich_template_separators_from_claude(
     if not claude_decoratives:
         return
 
-    _TOL_Y = 80   # px — Claude's y estimate can be off by this much
-    _TOL_X = 200  # px — wide tolerance for x since widths differ
+    _TOL_Y = 25   # px — was 80; tightened to avoid pulling labels across content gaps
+    _TOL_X = 80   # px — was 200; tightened so wide collage_box panels don't capture thin separators
 
     for el in template.elements:
         if el.get("type") != "separator":
@@ -282,16 +481,28 @@ def _enrich_template_separators_from_claude(
             continue  # already has S3 asset
 
         bd = el.get("bbox") or {}
-        el_cy = float(bd.get("y", 0)) + float(bd.get("h", 0)) / 2
-        el_cx = float(bd.get("x", 0)) + float(bd.get("w", 0)) / 2
+        el_w = float(bd.get("w", 0))
+        el_h = float(bd.get("h", 0))
+        el_cy = float(bd.get("y", 0)) + el_h / 2
+        el_cx = float(bd.get("x", 0)) + el_w / 2
+        # Orientation of the destination PDF separator (must match source).
+        el_orient = el.get("orientation") or ("horizontal" if el_w >= el_h else "vertical")
 
         # Find closest Claude decorative by vertical proximity
         best = None
         best_dist = float("inf")
         for cd in claude_decoratives:
             cbd = cd.get("bbox") or {}
-            cd_cy = float(cbd.get("y", 0)) + float(cbd.get("h", 0)) / 2
-            cd_cx = float(cbd.get("x", 0)) + float(cbd.get("w", 0)) / 2
+            cd_w = float(cbd.get("w", 0))
+            cd_h = float(cbd.get("h", 0))
+            cd_cy = float(cbd.get("y", 0)) + cd_h / 2
+            cd_cx = float(cbd.get("x", 0)) + cd_w / 2
+            # Require orientation match (or unknown source orientation).
+            cd_orient = cd.get("orientation") or (
+                "horizontal" if cd_w >= cd_h else "vertical"
+            )
+            if cd_orient != el_orient:
+                continue
             dy = abs(el_cy - cd_cy)
             dx = abs(el_cx - cd_cx)
             if dy < _TOL_Y and dx < _TOL_X and dy < best_dist:
@@ -359,19 +570,83 @@ def _cleanup_duplicate_graphics(template) -> None:
     removed_dup = len(drop_ids)
 
     # ── Fix 2: drop ornament images sitting on text content ──────────────────────
-    # Any ornament/separator image whose vertical center is within 40px of 2+ text
-    # elements is misplaced (landed inside menu content, not on a section header).
+    # Any ornament image whose vertical center is within 30px of any (>=1) text
+    # element is misplaced (landed inside menu content, not in a section gap).
+    # NOTE: ornaments whose semantic_label starts with "separator/" are explicit
+    # decorative dividers — we trust those even if a stray text line sits nearby.
     for el in els:
         if id(el) in drop_ids:
             continue
         if el.get("type") != "image" or el.get("subtype") != "ornament":
             continue
+        sl = el.get("semantic_label") or ""
+        if sl.startswith("separator/"):
+            continue  # benefit of the doubt — labelled as a real divider
+        # R23.7: source-cropped header ornaments live BETWEEN the header
+        # text and the item rows by source design. Keep unconditionally —
+        # they're pixel evidence, not synthesis. R19.3 body-below check
+        # only applies to the synth-flourish S3 path which was placed
+        # programmatically (and could land on top of an item row).
+        prov = el.get("provenance") or ""
+        if prov == "r23_3_header_ornament_crop":
+            continue
+        if prov == "r19_6_synth_header_flourish":
+            el_cy_tmp = _cy(el)
+            el_b_tmp = el.get("bbox") or {}
+            el_y2_tmp = float(el_b_tmp.get("y", 0)) + float(el_b_tmp.get("h", 0))
+            body_below = [
+                t for t in text_els
+                if 0 < (_cy(t) - el_y2_tmp) < 30
+                and (t.get("subtype") not in ("category_header",))
+            ]
+            if not body_below:
+                continue
+            drop_ids.add(id(el))
+            continue
         el_cy = _cy(el)
-        nearby_text = sum(
-            1 for t in text_els
-            if abs(_cy(t) - el_cy) < 40
-        )
-        if nearby_text >= 2:
+        nearby_text = [t for t in text_els if abs(_cy(t) - el_cy) < 30]
+        if nearby_text:
+            # Exempt ornaments whose ONLY upward neighbours are header-like text.
+            # A swash placed under a header inevitably has the next item line
+            # within 30 px below — that's normal and should not trigger a drop.
+            def _is_header_like(t):
+                if t.get("subtype") == "category_header":
+                    return True
+                style = t.get("style") or {}
+                if style.get("font_family") in ("decorative-script", "display"):
+                    return True
+                return False
+            # If at least one nearby neighbour is header-like AND the rest are
+            # below the ornament (not on top of it), keep the ornament.
+            header_neighbours_above = [
+                t for t in nearby_text
+                if _is_header_like(t) and _cy(t) < el_cy
+            ]
+            body_neighbours_above = [
+                t for t in nearby_text
+                if not _is_header_like(t) and _cy(t) < el_cy
+            ]
+            if header_neighbours_above and not body_neighbours_above:
+                # Header above the ornament with no body text overlapping → keep.
+                continue
+            if all(_is_header_like(t) for t in nearby_text):
+                continue
+            drop_ids.add(id(el))
+
+    # ── Fix 2b (R2-2): drop tiny unlabeled ornament fragments anywhere on page ──
+    # Letter-cluster artefacts from OpenCV dilation slip past the text-proximity
+    # window when they sit in vertical gaps between menu content and warning text.
+    # Real ornaments are either S3-labeled (semantic_label set) or PyMuPDF
+    # vector strokes (subtype != "ornament").
+    for el in els:
+        if id(el) in drop_ids:
+            continue
+        if el.get("type") != "image" or el.get("subtype") != "ornament":
+            continue
+        if el.get("semantic_label"):
+            continue  # named ornaments are trusted
+        bd = el.get("bbox") or {}
+        if float(bd.get("w", 0)) < 100 and float(bd.get("h", 0)) < 40:
             drop_ids.add(id(el))
 
     removed_floral = len(drop_ids) - removed_dup
@@ -397,11 +672,65 @@ def _cleanup_duplicate_graphics(template) -> None:
 
     removed_large = len(drop_ids) - removed_dup - removed_floral
 
+    # ── Fix 4: drop ornament/image fragments fully contained inside a logo bbox ──
+    # When the logo is a script word like "Château ANNA MARIA", _inject_pdf_graphics
+    # detects each letter-flourish as its own ornament. The logo image_data already
+    # contains those flourishes — keeping them here re-renders them on top.
+    logos = [e for e in els if e.get("type") == "logo" and id(e) not in drop_ids]
+    if logos:
+        def _contains(outer, inner) -> bool:
+            ob = outer.get("bbox") or {}
+            ib = inner.get("bbox") or {}
+            ox1, oy1 = float(ob.get("x", 0)), float(ob.get("y", 0))
+            ox2 = ox1 + float(ob.get("w", 0))
+            oy2 = oy1 + float(ob.get("h", 0))
+            ix1, iy1 = float(ib.get("x", 0)), float(ib.get("y", 0))
+            ix2 = ix1 + float(ib.get("w", 0))
+            iy2 = iy1 + float(ib.get("h", 0))
+            # Treat as "inside" if 90%+ of the inner bbox area sits within outer.
+            iw = max(0.0, min(ox2, ix2) - max(ox1, ix1))
+            ih = max(0.0, min(oy2, iy2) - max(oy1, iy1))
+            inter = iw * ih
+            inner_area = max(1.0, (ix2 - ix1) * (iy2 - iy1))
+            return inter / inner_area >= 0.9
+        for el in els:
+            if id(el) in drop_ids:
+                continue
+            if el.get("type") != "image":
+                continue
+            for logo in logos:
+                if _contains(logo, el):
+                    drop_ids.add(id(el))
+                    break
+
+    removed_in_logo = len(drop_ids) - removed_dup - removed_floral - removed_large
+
     if drop_ids:
         template.elements = [e for e in els if id(e) not in drop_ids]
         print(f"[cleanup] removed {removed_dup} cross-type duplicates, "
               f"{removed_floral} text-area ornaments, "
-              f"{removed_large} oversized ornament crops "
+              f"{removed_large} oversized ornament crops, "
+              f"{removed_in_logo} fragments inside logo "
+              f"({len(template.elements)} elements remain)")
+
+    # ── R6-2: drop empty collage_box elements (no image_data, no semantic_label) ──
+    # These are noise from earlier label-clearing — they render as nothing
+    # (or worse, a debug bbox) and only confuse the renderer.
+    els = template.elements
+    before_empty = len(els)
+    els = [
+        e for e in els
+        if not (
+            e.get("type") == "image"
+            and e.get("subtype") == "collage_box"
+            and not e.get("image_data")
+            and not e.get("semantic_label")
+        )
+    ]
+    removed_empty_collage = before_empty - len(els)
+    if removed_empty_collage:
+        template.elements = els
+        print(f"[cleanup] R6-2: removed {removed_empty_collage} empty collage_box element(s) "
               f"({len(template.elements)} elements remain)")
 
 
@@ -422,6 +751,183 @@ def _get_overlap(a: dict, b: dict) -> float:
     # Area of intersection relative to the SMALLEST box (more robust for label transfer)
     min_area = min(a.get("w", 0) * a.get("h", 0), b.get("w", 0) * b.get("h", 0))
     return inter / min_area if min_area > 0 else 0.0
+
+
+def _synthesize_header_flourishes(template, side_img, canvas_w: int, canvas_h: int, claude_layout: Optional[dict] = None) -> None:
+    """
+    For every category_header text element in the template, inject an S3
+    `ornament/floral_swash_centered` (or `ornament/floral_swash_left` for
+    left-aligned headers) image element 14 px below it. This is keyed off
+    the pixel-accurate PyMuPDF text positions, not Claude's approximate
+    Vision wavy-line bboxes, so it works regardless of TOL_Y matching.
+
+    Skip if there is already an image element with image_data within 40 px
+    vertically of where the flourish would go (don't double-up).
+
+    R19.3: Only inject if (a) Claude vision saw an ornament/graphic near the
+    header OR (b) an OpenCV blob match exists near the header. Also skip if
+    another category_header sits within 350 px below in the same column
+    (tight grids like "Add On" where the swash would slice across rows).
+    Tag injected flourishes with provenance `r19_6_synth_header_flourish` so
+    _cleanup_duplicate_graphics can narrowly exempt only the ones we placed.
+    """
+    from s3_asset_library import resolve_asset
+
+    headers = [
+        e for e in template.elements
+        if e.get("type") == "text" and e.get("subtype") == "category_header"
+    ]
+    if not headers:
+        return
+
+    image_els = [e for e in template.elements if e.get("type") == "image"]
+
+    # R19.3: collect Claude-vision ornaments / graphic blobs (subtype includes
+    # any 'ornament', 'separator', 'decorative_*', 'wavy_line', 'swash', etc.)
+    # so we can require evidence-based injection.
+    claude_ornaments: list[dict] = []
+    if claude_layout is not None:
+        for ce in (claude_layout.get("elements", []) or []):
+            sub = (ce.get("subtype") or "").lower()
+            stype = (ce.get("type") or "").lower()
+            if stype in ("ornament", "decorative_divider", "graphic", "image") or \
+               any(k in sub for k in ("ornament", "swash", "wavy", "scroll",
+                                       "diamond", "vine", "calligraph",
+                                       "decorative", "separator", "flourish")):
+                bd = ce.get("bbox")
+                if isinstance(bd, dict):
+                    claude_ornaments.append(ce)
+    # OpenCV blob graphics already live in template.elements as image type
+    # without semantic_label or as separator. Use those bboxes as evidence too.
+    blob_evidence = [
+        e for e in template.elements
+        if e.get("type") in ("image", "separator")
+        and not (e.get("semantic_label") or "").startswith("ornament/floral_swash")
+    ]
+
+    def _has_ornament_near(hx_c: float, hy_c: float, max_dx: float = 600, max_dy: float = 50) -> bool:
+        # max_dy is asymmetric — we look ±50 px vertically around the header
+        # center (sources put a wavy line right under the header text).
+        for ce in claude_ornaments:
+            bd = ce.get("bbox") or {}
+            ex = float(bd.get("x", 0)) + float(bd.get("w", 0)) / 2
+            ey = float(bd.get("y", 0)) + float(bd.get("h", 0)) / 2
+            if abs(ex - hx_c) < max_dx and abs(ey - hy_c) < max_dy:
+                return True
+        for be in blob_evidence:
+            bd = be.get("bbox") or {}
+            ex = float(bd.get("x", 0)) + float(bd.get("w", 0)) / 2
+            ey = float(bd.get("y", 0)) + float(bd.get("h", 0)) / 2
+            if abs(ex - hx_c) < max_dx and abs(ey - hy_c) < max_dy:
+                return True
+        return False
+
+    def _another_header_below(this_header: dict, max_dy: float = 350) -> bool:
+        bd = this_header.get("bbox") or {}
+        my_y = float(bd.get("y", 0)) + float(bd.get("h", 0))
+        my_col = this_header.get("column")
+        my_cx = float(bd.get("x", 0)) + float(bd.get("w", 0)) / 2
+        for o in headers:
+            if o is this_header:
+                continue
+            ob = o.get("bbox") or {}
+            oy = float(ob.get("y", 0))
+            ocol = o.get("column")
+            ocx = float(ob.get("x", 0)) + float(ob.get("w", 0)) / 2
+            # Same column (by index when present, else by x-proximity within 200 px)
+            same_col = (my_col is not None and ocol is not None and my_col == ocol) or \
+                       (abs(my_cx - ocx) < 200)
+            if same_col and 0 < (oy - my_y) < max_dy:
+                return True
+        return False
+
+    for h in headers:
+        bd = h.get("bbox") or {}
+        hx = float(bd.get("x", 0))
+        hy = float(bd.get("y", 0))
+        hw = float(bd.get("w", 0))
+        hh = float(bd.get("h", 0))
+        if hw <= 0 or hh <= 0:
+            continue
+
+        flourish_cy_target = hy + hh + 18 + 50  # R6-3: 50 ≈ half the swash height (100 px)
+        flourish_cx = hx + hw / 2
+
+        # Skip if an image element (any) already sits within 40 px vertical of target
+        already_there = any(
+            abs((float((e.get("bbox") or {}).get("y", 0))
+                 + float((e.get("bbox") or {}).get("h", 0)) / 2) - flourish_cy_target) < 40
+            and abs((float((e.get("bbox") or {}).get("x", 0))
+                     + float((e.get("bbox") or {}).get("w", 0)) / 2) - flourish_cx) < hw
+            for e in image_els
+        )
+        if already_there:
+            continue
+
+        # R19.3: gate 1 — require ornament evidence near the header centre.
+        # Search window is the area below the header (where a swash would sit).
+        hx_c = hx + hw / 2
+        hy_below_c = hy + hh + 30
+        if not _has_ornament_near(hx_c, hy_below_c, max_dx=max(hw * 1.5, 400), max_dy=80):
+            continue
+
+        # R19.3: gate 2 — skip when the next category_header sits within
+        # 350 px below in the same column (tight section like "Add On").
+        if _another_header_below(h, max_dy=350):
+            continue
+
+        # R23.3: pixel-crop the actual ornament from the source image,
+        # not an S3 generic scroll-divider asset. Source IS the truth.
+        # If the cropped region is empty (pure white), the source has no
+        # flourish under this header and we skip per Golden Rule 1.
+        import base64
+        import io as _io
+
+        align = (h.get("style") or {}).get("text_align", "left")
+        target_h = 80.0
+        target_w = min(hw * 2.5, max(hw * 1.2, 280.0))
+        if align == "center":
+            crop_x1 = max(0, int(flourish_cx - target_w / 2))
+        elif align == "right":
+            crop_x1 = max(0, int(hx + hw - target_w))
+        else:
+            crop_x1 = max(0, int(hx))
+        crop_x2 = min(canvas_w, crop_x1 + int(target_w))
+        crop_y1 = max(0, int(hy + hh + 8))
+        crop_y2 = min(canvas_h, crop_y1 + int(target_h))
+        if crop_x2 <= crop_x1 + 20 or crop_y2 <= crop_y1 + 8:
+            continue
+        try:
+            _crop_img = side_img.crop((crop_x1, crop_y1, crop_x2, crop_y2)).convert("RGB")
+            # Empty-pixel check: if the crop is >98% white, no ornament present.
+            _pixels = _crop_img.getdata()
+            _total = len(_pixels)
+            if _total == 0:
+                continue
+            _non_white = sum(1 for px in _pixels if px[0] < 240 or px[1] < 240 or px[2] < 240)
+            if _non_white / _total < 0.02:
+                continue
+            _buf = _io.BytesIO()
+            _crop_img.save(_buf, format="PNG")
+        except Exception as _exc:
+            print(f"[pipeline] R23.3 header ornament crop failed for '{h.get('content','?')}': {_exc}")
+            continue
+
+        new_el = {
+            "id": f"img_hdr_orn_{int(hx)}_{int(hy)}",
+            "type": "image",
+            "subtype": "ornament",
+            "semantic_label": None,
+            "provenance": "r23_3_header_ornament_crop",
+            "bbox": {
+                "x": float(crop_x1), "y": float(crop_y1),
+                "w": float(crop_x2 - crop_x1), "h": float(crop_y2 - crop_y1),
+            },
+            "image_data": base64.b64encode(_buf.getvalue()).decode(),
+        }
+        template.elements.append(new_el)
+        print(f"[pipeline] R23.3 header ornament crop under '{h.get('content','?')}' "
+              f"({crop_x1},{crop_y1}) {crop_x2-crop_x1}×{crop_y2-crop_y1}")
 
 
 def _inject_pdf_graphics(
@@ -530,16 +1036,24 @@ def _inject_pdf_graphics(
         )
         if already_covered:
             continue
+        # Fix 3 (subtype-safe labels): a collage_box must NEVER carry an
+        # ornament/* or separator/* label — those labels imply a small decorative
+        # asset and break the renderer (collage_box is a full-width panel).
+        # Clear the bad label rather than drop the element.
+        effective_label = sl or None
+        if is_collage and effective_label and effective_label.startswith(("ornament/", "separator/")):
+            print(f"[pipeline] dropping bad collage_box label '{effective_label}' → None")
+            effective_label = None
         hybrid_graphics.append({
             "type": "image",
             "subtype": "collage_box" if is_collage else "badge",
-            "semantic_label": sl or None,
+            "semantic_label": effective_label,
             "bbox": {
                 "x": float(ce_bd.get("x", 0)), "y": float(ce_bd.get("y", 0)),
                 "w": max(1.0, float(ce_bd.get("w", 0))), "h": max(1.0, float(ce_bd.get("h", 0))),
             },
         })
-        print(f"[pipeline] PDF Claude {'collage_box' if is_collage else 'badge'}: {sl or subtype}")
+        print(f"[pipeline] PDF Claude {'collage_box' if is_collage else 'badge'}: {effective_label or subtype}")
 
     # Skip logo if PyMuPDF already found one
     graphic_els = []
@@ -647,15 +1161,365 @@ def _inject_pdf_graphics(
                 bd["x"] = cx - nd / 2; bd["y"] = cy - nd / 2
                 print(f"[pipeline] PDF badge cap: {bw:.0f}×{bh:.0f} → {nd:.0f}pt")
 
+    # R7-C: Known brand badges (Food Network, Diners' Choice) get misplaced by
+    # Claude vision — it estimates them at y≈1859/2095 just below the menu items
+    # when the actual placement is reserved white-space in the lower-right brand
+    # zone (y≈2300-2700). Snap their y-coordinate down when Claude places them
+    # inside the menu-text band. The > canvas_h * 0.15 displacement threshold
+    # protects against false snapping on menus that legitimately have these
+    # badges higher up.
+    # Tuned against the source layout for Château-style menus:
+    # Food Network gray badge occupies y ≈ 73-85% of canvas, Diners' Choice
+    # gray badge occupies y ≈ 85-95%. These zones are TOP of badge → target.
+    _BRAND_BADGE_LOWER_ZONE = {
+        "badge/food_network":              (0.73, 0.85),
+        "badge/opentable_diners_choice":   (0.85, 0.95),
+    }
+    for el in graphic_els:
+        if el.get("subtype") != "badge":
+            continue
+        sl = el.get("semantic_label", "")
+        if sl not in _BRAND_BADGE_LOWER_ZONE:
+            continue
+        bd = el.get("bbox") or {}
+        current_y = float(bd.get("y", 0))
+        cx = float(bd.get("x", 0)) + float(bd.get("w", 0)) / 2
+        zone_min, zone_max = _BRAND_BADGE_LOWER_ZONE[sl]
+        target_y_min = canvas_h * zone_min
+        # Only snap large/standalone variants — small inline ones inside an
+        # As-Seen-On panel live on the LEFT side (cx < 60% canvas_w) and
+        # should stay where they are.
+        is_right_side = cx > canvas_w * 0.55
+        if is_right_side and current_y < target_y_min and (target_y_min - current_y) > canvas_h * 0.05:
+            bd["y"] = target_y_min
+            print(f"[pipeline] R7-C badge snap: {sl} y {current_y:.0f} → {target_y_min:.0f}")
+
+    # R14: Auto-inject missing complement brand badge. The Château menu family
+    # ALWAYS has Food Network + Diners' Choice as a stacked pair on the right.
+    # Claude vision is inconsistent and sometimes returns only one of the two.
+    # When we see one in the lower-right zone, synthesise the other so the
+    # final render always includes both.
+    _has_brand_in_lower_right = {"badge/food_network": False, "badge/opentable_diners_choice": False}
+    for el in graphic_els:
+        if el.get("subtype") != "badge":
+            continue
+        sl = el.get("semantic_label", "")
+        if sl not in _has_brand_in_lower_right:
+            continue
+        bd = el.get("bbox") or {}
+        cx = float(bd.get("x", 0)) + float(bd.get("w", 0)) / 2
+        cy = float(bd.get("y", 0)) + float(bd.get("h", 0)) / 2
+        if cx > canvas_w * 0.55 and cy > canvas_h * 0.6:
+            _has_brand_in_lower_right[sl] = True
+    _any_brand_in_lower_right = any(_has_brand_in_lower_right.values())
+    if _any_brand_in_lower_right:
+        for sl, present in _has_brand_in_lower_right.items():
+            if present:
+                continue
+            # Synthesise the missing companion at its canonical zone.
+            graphic_els.append({
+                "type": "image",
+                "subtype": "badge",
+                "semantic_label": sl,
+                "bbox": {  # placeholder — final size/x parked below in resize block
+                    "x": canvas_w * 0.78,
+                    "y": canvas_h * (0.73 if sl == "badge/food_network" else 0.85),
+                    "w": 250.0,
+                    "h": 250.0,
+                },
+            })
+            print(f"[pipeline] R14 inject missing brand badge: {sl} (pair complement)")
+
+    # R16: As-Seen-On panel complement injection. The Château family's "As seen on:"
+    # collage_box (bottom-left) ALWAYS contains badges for food_network, youtube
+    # and hulu. Claude vision sometimes returns only 1 or 2 of the 3. When we see
+    # a collage_box at left-bottom AND at least one inline brand badge, ensure
+    # the missing companions are placed inside the panel too.
+    # R22.1: Claude vision sometimes returns NEITHER a collage_box NOR any inline
+    # brand badges — but the "As seen on:" text is reliably there. Synthesize a
+    # virtual panel anchored to that text element when no collage_box was detected.
+    _AS_SEEN_ON_BRANDS = ("badge/food_network", "badge/youtube", "badge/hulu")
+    panel = None
+    for el in graphic_els:
+        if el.get("type") == "image" and el.get("subtype") == "collage_box":
+            bd = el.get("bbox") or {}
+            cx = float(bd.get("x", 0)) + float(bd.get("w", 0)) / 2
+            cy = float(bd.get("y", 0)) + float(bd.get("h", 0)) / 2
+            if cx < canvas_w * 0.55 and cy > canvas_h * 0.55:
+                panel = (el, bd)
+                break
+
+    # R23.1: when an "As seen on:" caption sits in the lower-left, pixel-crop
+    # the entire panel region from the source page image and embed it as a
+    # single image element. Source IS the truth — no synth badges, no S3
+    # generics. Runs UNCONDITIONALLY when caption text exists, even if Claude
+    # vision returned a partial collage_box (its bytes are still synth/wrong-
+    # aspect and don't match source pixels).
+    if True:
+        for _txt in template.elements:
+            if _txt.get("type") != "text":
+                continue
+            _tc = (_txt.get("content") or "").lower().strip()
+            if not (_tc.startswith("as seen on") or _tc.startswith("featured on")):
+                continue
+            _tbd = _txt.get("bbox") or {}
+            _tcx = float(_tbd.get("x", 0)) + float(_tbd.get("w", 0)) / 2
+            _tcy = float(_tbd.get("y", 0)) + float(_tbd.get("h", 0)) / 2
+            if _tcx >= canvas_w * 0.55 or _tcy <= canvas_h * 0.5:
+                continue
+            # Crop region: from a bit left of caption.x to caption.x + 700,
+            # from caption.y down to caption.y + caption.h + 200 (covers
+            # caption + 3 badges row + show captions below).
+            _cx1 = max(0, int(_tbd.get("x", 0)) - 20)
+            _cy1 = max(0, int(_tbd.get("y", 0)))
+            _cx2 = min(canvas_w, int(_tbd.get("x", 0)) + 700)
+            _cy2 = min(canvas_h, int(_tbd.get("y", 0) + _tbd.get("h", 0)) + 250)
+            if _cx2 <= _cx1 + 50 or _cy2 <= _cy1 + 50:
+                continue
+            try:
+                import hashlib as _hashlib_aso
+                _crop = side_img.crop((_cx1, _cy1, _cx2, _cy2))
+                _buf = io.BytesIO()
+                _crop.convert("RGB").save(_buf, format="PNG")
+                _aso_id = f"img_aso_panel_{_hashlib_aso.md5(f'aso_{_cx1}_{_cy1}'.encode()).hexdigest()[:8]}"
+                _aso_el = {
+                    "id": _aso_id,
+                    "type": "image",
+                    "subtype": "collage_box",
+                    "semantic_label": None,
+                    "bbox": {
+                        "x": float(_cx1), "y": float(_cy1),
+                        "w": float(_cx2 - _cx1), "h": float(_cy2 - _cy1),
+                    },
+                    "image_data": base64.b64encode(_buf.getvalue()).decode(),
+                    "provenance": "r23_1_aso_panel_crop",
+                }
+                graphic_els.append(_aso_el)
+                # R23.1: source crop is now the authoritative As-Seen-On panel.
+                # Drop:
+                #  (a) any other collage_box whose centre is in the lower-left
+                #      zone (Claude often returns the panel at wrong y; the
+                #      synth bytes render as a misplaced colored block);
+                #  (b) any small As-Seen-On brand badge (food_network / hulu /
+                #      youtube < 250 px wide) anywhere in the lower-left zone —
+                #      the source crop already contains the real badge pixels.
+                # Big right-side gray badges (>= 250 px) at x > canvas_w*0.7
+                # are the standalone Food Network "Best Bites" / Diners' Choice
+                # awards — those are SEPARATE elements and stay.
+                _aso_brands = {"badge/food_network", "badge/youtube", "badge/hulu", "badge/best_of"}
+                _ll_x_max = canvas_w * 0.55
+                _ll_y_min = canvas_h * 0.50
+                _kept_graphics = []
+                for _gx in graphic_els:
+                    if _gx is _aso_el:
+                        _kept_graphics.append(_gx)
+                        continue
+                    _gbd = _gx.get("bbox") or {}
+                    _gcx = float(_gbd.get("x", 0)) + float(_gbd.get("w", 0)) / 2
+                    _gcy = float(_gbd.get("y", 0)) + float(_gbd.get("h", 0)) / 2
+                    _gw = float(_gbd.get("w", 0))
+                    _in_ll_zone = (_gcx < _ll_x_max and _gcy > _ll_y_min)
+                    if _in_ll_zone and _gx.get("subtype") == "collage_box":
+                        continue  # supersede any Claude panel in lower-left
+                    if (_in_ll_zone
+                            and _gx.get("subtype") == "badge"
+                            and _gw < 250
+                            and (_gx.get("semantic_label") or "") in _aso_brands):
+                        continue
+                    _kept_graphics.append(_gx)
+                graphic_els[:] = _kept_graphics
+                # Also drop overlapping text elements (R19.9 pattern) so the
+                # crop doesn't double-render with floating text on top.
+                _kept_text = []
+                _txt_dropped = 0
+                for _ex in template.elements:
+                    if _ex.get("type") == "text":
+                        _xb = _ex.get("bbox") or {}
+                        _xcx = float(_xb.get("x", 0)) + float(_xb.get("w", 0)) / 2
+                        _xcy = float(_xb.get("y", 0)) + float(_xb.get("h", 0)) / 2
+                        if _cx1 <= _xcx <= _cx2 and _cy1 <= _xcy <= _cy2:
+                            _txt_dropped += 1
+                            continue
+                    _kept_text.append(_ex)
+                template.elements = _kept_text
+                # Setting panel here ensures R16 / R19.5 panel-resolver paths
+                # below see a panel and skip the synth-brand inject branch.
+                panel = (_aso_el, _aso_el["bbox"])
+                print(f"[pipeline] R23.1 As-Seen-On pixel-crop "
+                      f"({_cx1},{_cy1}) {_cx2-_cx1}×{_cy2-_cy1}"
+                      f" — dropped {_txt_dropped} text spans inside crop")
+            except Exception as _exc:
+                print(f"[pipeline] R23.1 As-Seen-On pixel-crop failed: {_exc}")
+            break
+
+    if panel is not None:
+        panel_el, panel_bd = panel
+        panel_x = float(panel_bd.get("x", 0))
+        panel_y = float(panel_bd.get("y", 0))
+        panel_w = float(panel_bd.get("w", 200))
+        panel_h = float(panel_bd.get("h", 200))
+        # Which brands are already inside (or near) the panel?
+        present_inline_els: dict[str, dict] = {}
+        for el in graphic_els:
+            if el.get("subtype") != "badge":
+                continue
+            sl = el.get("semantic_label", "")
+            if sl not in _AS_SEEN_ON_BRANDS:
+                continue
+            bd = el.get("bbox") or {}
+            ex = float(bd.get("x", 0)) + float(bd.get("w", 0)) / 2
+            ey = float(bd.get("y", 0)) + float(bd.get("h", 0)) / 2
+            # Treat as "inline panel" if x is in the left zone (not the big-gray right zone).
+            if ex < canvas_w * 0.55:
+                present_inline_els[sl] = el
+        present_inline = set(present_inline_els)
+        # Inject missing brands as inline-sized (90×90) within the panel bounds.
+        missing = [b for b in _AS_SEEN_ON_BRANDS if b not in present_inline]
+        # R20.1: also check for an "As seen on:" text element near or above the
+        # panel — if present, fire even when Claude returned no inline badges.
+        # Claude vision is non-deterministic; one run will detect food_network/
+        # hulu/youtube inline, the next returns the panel only. The text label
+        # is a much more stable signal.
+        has_aso_text = False
+        try:
+            for _txt in template.elements:
+                if _txt.get("type") != "text":
+                    continue
+                _tc = (_txt.get("content") or "").lower()
+                if "as seen on" in _tc or "featured on" in _tc:
+                    _bd = _txt.get("bbox") or {}
+                    _cx = float(_bd.get("x", 0)) + float(_bd.get("w", 0)) / 2
+                    _cy = float(_bd.get("y", 0)) + float(_bd.get("h", 0)) / 2
+                    if _cx < canvas_w * 0.55 and _cy > canvas_h * 0.45:
+                        has_aso_text = True
+                        break
+        except Exception:
+            pass
+        # R23.1: if the panel is a pixel-cropped source image (provenance
+        # r23_1_aso_panel_crop), skip per-brand badge synth — the crop
+        # already contains the real source pixels for every badge.
+        _is_r23_panel = (panel_el.get("provenance") == "r23_1_aso_panel_crop")
+        if not _is_r23_panel and missing and (present_inline or has_aso_text):
+            # R19.5: real row-layout. Allocate one slot per badge across the
+            # panel width; centre the badge inside each slot. No more vertical
+            # stack with i*5 offsets that overlap when more than one is missing.
+            total = len(missing) + len(present_inline)
+            slot_w = panel_w / max(total, 1)
+            size = 90.0
+            for i, sl in enumerate(missing):
+                slot_idx = len(present_inline) + i
+                slot_x = panel_x + slot_idx * slot_w + (slot_w - size) / 2
+                slot_y = panel_y + (panel_h - size) / 2
+                graphic_els.append({
+                    "type": "image",
+                    "subtype": "badge",
+                    "semantic_label": sl,
+                    "bbox": {"x": slot_x, "y": slot_y, "w": size, "h": size},
+                })
+                print(f"[pipeline] R16 inject missing as-seen-on badge: {sl}")
+
+        # R19.5: per-panel resolver. After injection, sort ALL badges whose
+        # centre lives inside the panel bbox by x and lay them out evenly in
+        # a single row. This corrects Claude bboxes with bogus aspect ratios
+        # (e.g. badge/youtube reported as 216×90 inside a 90×90 slot) and the
+        # overlap that follows.
+        # Force square 90×90 for the brand badges that ship square in source.
+        # Leave badge/youtube at its natural aspect (it really is wide).
+        _SQUARE_BRANDS = {
+            "badge/food_network",
+            "badge/hulu",
+            "badge/best_of",
+            "badge/opentable_diners_choice",
+        }
+        panel_x2 = panel_x + panel_w
+        panel_y2 = panel_y + panel_h
+        in_panel: list[dict] = []
+        for el in graphic_els:
+            if el.get("subtype") != "badge":
+                continue
+            sl = el.get("semantic_label", "")
+            if sl not in _AS_SEEN_ON_BRANDS:
+                continue
+            bd = el.get("bbox") or {}
+            cx_e = float(bd.get("x", 0)) + float(bd.get("w", 0)) / 2
+            cy_e = float(bd.get("y", 0)) + float(bd.get("h", 0)) / 2
+            if panel_x <= cx_e <= panel_x2 and panel_y <= cy_e <= panel_y2:
+                in_panel.append(el)
+        if in_panel:
+            in_panel.sort(key=lambda e: float((e.get("bbox") or {}).get("x", 0)))
+            n = len(in_panel)
+            slot_w = panel_w / n
+            for idx, el in enumerate(in_panel):
+                sl = el.get("semantic_label", "")
+                bd = el.get("bbox") or {}
+                # Force square for the listed brands; keep natural aspect otherwise.
+                if sl in _SQUARE_BRANDS:
+                    bd["w"] = 90.0
+                    bd["h"] = 90.0
+                else:
+                    # Cap height at 90 and keep stored aspect.
+                    cur_w = float(bd.get("w", 90)) or 90.0
+                    cur_h = float(bd.get("h", 90)) or 90.0
+                    asp = cur_w / max(1.0, cur_h)
+                    bd["h"] = 90.0
+                    bd["w"] = 90.0 * asp
+                bw = float(bd["w"])
+                bh = float(bd["h"])
+                # Centre badge in its slot horizontally; centre vertically in panel.
+                bd["x"] = panel_x + idx * slot_w + (slot_w - bw) / 2
+                bd["y"] = panel_y + (panel_h - bh) / 2
+                el["bbox"] = bd
+            print(f"[pipeline] R19.5 panel resolver: laid out {n} as-seen-on badges in row")
+
     # S3 asset resolution (wavy lines, ornaments, known badge PNGs)
     # After fetching, normalize bbox to the asset's natural proportions.
+    # R8-fix: BIG brand badges in the lower-right zone (Food Network / Diners'
+    # Choice gray standalone variants) should NOT use the small-colored S3 asset
+    # — those variants are visually different (large + gray + decorative ring).
+    # Skip S3 for those and let the pixel-crop fallback below capture the actual
+    # gray pixels from the source PDF.
+    _BRAND_LABELS = {"badge/food_network", "badge/opentable_diners_choice"}
     for el in graphic_els:
-        if el.get("semantic_label"):
-            s3_bytes = resolve_asset(el["semantic_label"])
-            if s3_bytes:
-                el["image_data"] = base64.b64encode(s3_bytes).decode()
-                _apply_s3_natural_bbox(el, s3_bytes, canvas_w, canvas_h)
-                print(f"[pipeline] PDF S3 asset: {el['semantic_label']}")
+        sl = el.get("semantic_label")
+        if not sl:
+            continue
+        bd = el.get("bbox") or {}
+        cx = float(bd.get("x", 0)) + float(bd.get("w", 0)) / 2
+        cy = float(bd.get("y", 0)) + float(bd.get("h", 0)) / 2
+        # Brand-badge in lower-right zone → skip S3, use pixel crop from source.
+        # ALSO enforce the standalone big-gray badge size (~250 px) AND park the
+        # bbox at the canonical zone position rather than trusting Claude's
+        # reported y (Claude often reports the badge inside the menu-text band).
+        if sl in _BRAND_LABELS and cy > canvas_h * 0.6 and cx > canvas_w * 0.55:
+            # Source badges are ~350 px wide on a 2200-wide canvas. Scale with
+            # canvas width so this works for other dimensions too.
+            target = max(200.0, min(380.0, float(canvas_w) * 0.16))
+            zone_min, zone_max = _BRAND_BADGE_LOWER_ZONE.get(sl, (0.7, 0.9))
+            # Park badge top at zone_min Y, right-aligned with ~50 px margin from
+            # the right edge of canvas (that's where source has them).
+            badge_y = canvas_h * zone_min
+            badge_x = max(0.0, float(canvas_w) - target - 60.0)
+            bd["w"] = target
+            bd["h"] = target
+            bd["x"] = badge_x
+            bd["y"] = badge_y
+            print(f"[pipeline] PDF brand-badge zone-park: {sl} → ({badge_x:.0f},{badge_y:.0f}) {target:.0f}×{target:.0f}")
+            continue
+        s3_bytes = resolve_asset(sl)
+        if s3_bytes:
+            el["image_data"] = base64.b64encode(s3_bytes).decode()
+            _apply_s3_natural_bbox(el, s3_bytes, canvas_w, canvas_h)
+            print(f"[pipeline] PDF S3 asset: {sl}")
+
+    # R20.1: re-resolve As-Seen-On panel badges AFTER the S3 normalize pass so
+    # _apply_s3_natural_bbox doesn't overwrite the row layout set in R19.5/R16.
+    # The panel resolver lays badges in a single row inside the collage_box,
+    # 90×90 for square brands (food_network/hulu/best_of/diners_choice),
+    # natural-aspect@h=90 for youtube. Image_data is already set by the S3
+    # loop above; only bbox is adjusted here.
+    # R21.1: pass text elements so the resolver can anchor to the "As seen on:"
+    # caption when the collage_box bbox is at the wrong Y.
+    _resolve_as_seen_on_panel(graphic_els, canvas_w, canvas_h, text_els=template.elements)
 
     # Pixel crop for image elements that didn't resolve via S3.
     # Use a tight area cap per subtype:
@@ -684,26 +1548,62 @@ def _inject_pdf_graphics(
             crop.convert("RGB").save(buf, format="PNG")
             el["image_data"] = base64.b64encode(buf.getvalue()).decode()
 
-    # Logo (only reached if PyMuPDF found nothing): pixel-refine bbox + crop
-    logo_image_data = None
+    # R2-2: Drop tiny unlabeled ornament crops — these are dilated letter blobs from
+    # warning text / fine print, not real decorators. Real ornaments are either
+    # S3-labeled or come from PyMuPDF vector strokes.
+    graphic_els = [
+        el for el in graphic_els
+        if not (
+            el.get("type") == "image"
+            and el.get("subtype") == "ornament"
+            and not el.get("semantic_label")
+            and float((el.get("bbox") or {}).get("w", 0)) < 100
+            and float((el.get("bbox") or {}).get("h", 0)) < 40
+        )
+    ]
+
+    # R7-A: Multi-logo crop — iterate every logo element and build a
+    # {logo_index: image_data} dict so each LogoElement can carry its own crop.
+    # Backward-compat `logo_image_data` (single) still set from the first logo
+    # so older callers / image-path code paths keep working.
+    logo_image_data: Optional[str] = None
+    logo_image_data_by_idx: dict[int, str] = {}
     for el in graphic_els:
-        if el.get("type") == "logo":
-            bd = el.get("bbox") or {}
-            refined = _refine_logo_bbox_by_pixels(side_img, bd, canvas_w, canvas_h)
-            if refined and refined["w"] > 20 and refined["h"] > 20:
-                bd.update(refined)
-            x1, y1 = max(0, int(bd.get("x", 0))), max(0, int(bd.get("y", 0)))
-            x2 = min(canvas_w, int(bd.get("x", 0) + bd.get("w", 0)))
-            y2 = min(canvas_h, int(bd.get("y", 0) + bd.get("h", 0)))
-            if x2 > x1 and y2 > y1:
-                crop = side_img.crop((x1, y1, x2, y2))
-                buf = io.BytesIO()
-                crop.convert("RGB").save(buf, format="PNG")
-                logo_image_data = base64.b64encode(buf.getvalue()).decode()
-                print(f"[pipeline] PDF logo cropped: {x2-x1}×{y2-y1}px")
-            break
+        if el.get("type") != "logo":
+            continue
+        idx = int(el.get("logo_index", 0))
+        bd = el.get("bbox") or {}
+        refined = _refine_logo_bbox_by_pixels(side_img, bd, canvas_w, canvas_h)
+        if refined and refined["w"] > 20 and refined["h"] > 20:
+            bd.update(refined)
+        x1, y1 = max(0, int(bd.get("x", 0))), max(0, int(bd.get("y", 0)))
+        x2 = min(canvas_w, int(bd.get("x", 0) + bd.get("w", 0)))
+        y2 = min(canvas_h, int(bd.get("y", 0) + bd.get("h", 0)))
+        if x2 > x1 and y2 > y1:
+            crop = side_img.crop((x1, y1, x2, y2))
+            buf = io.BytesIO()
+            crop.convert("RGB").save(buf, format="PNG")
+            data_b64 = base64.b64encode(buf.getvalue()).decode()
+            logo_image_data_by_idx[idx] = data_b64
+            if logo_image_data is None:
+                logo_image_data = data_b64
+            print(f"[pipeline] PDF logo #{idx} cropped: {x2-x1}×{y2-y1}px")
 
     graphic_els = _enforce_single_logo(graphic_els)
+
+    # R2-3: final scrub — no collage_box may carry an ornament/* or separator/* label,
+    # regardless of which code path assigned it.
+    for el in graphic_els:
+        if el.get("type") == "image" and el.get("subtype") == "collage_box":
+            sl = el.get("semantic_label") or ""
+            if sl.startswith("ornament/") or sl.startswith("separator/"):
+                print(f"[pipeline] scrub bad collage_box label: {sl} → None")
+                el["semantic_label"] = None
+                # Also nullify image_data since it was fetched for the wrong asset
+                if el.get("image_data") and sl:
+                    # Asset was an ornament PNG stretched into a collage strip — drop it
+                    # so the renderer falls back to the source-image pixel crop or nothing.
+                    el["image_data"] = None
 
     # Build validated model instances and append to the existing template element list
     tmp = build_template_from_claude(
@@ -712,6 +1612,7 @@ def _inject_pdf_graphics(
         canvas_w=canvas_w,
         canvas_h=canvas_h,
         logo_image_data=logo_image_data,
+        logo_image_data_dict=logo_image_data_by_idx or None,
     )
     for el_dict in tmp.elements:
         template.elements.append(el_dict)
@@ -771,6 +1672,23 @@ def process(file_path: str, output_dir: str, file_stem: str = None) -> list[dict
             claude_layout = _process_side_image(side_img)
             if claude_layout is not None:
                 print(f"[pipeline] layout: {len(claude_layout.get('elements', []))} elements")
+                # R7-defensive: normalise every bbox value + column to numeric types.
+                # Claude vision occasionally emits strings inside the bbox dict
+                # ("y": "100") which crash later sort keys with str/int comparison.
+                for _el in claude_layout.get("elements", []) or []:
+                    _bd = _el.get("bbox")
+                    if isinstance(_bd, dict):
+                        for _k in ("x", "y", "w", "h"):
+                            try:
+                                _bd[_k] = float(_bd.get(_k, 0) or 0)
+                            except (TypeError, ValueError):
+                                _bd[_k] = 0.0
+                    _col = _el.get("column")
+                    if _col is not None and not isinstance(_col, int):
+                        try:
+                            _el["column"] = int(_col)
+                        except (TypeError, ValueError):
+                            _el["column"] = 0
 
             # --- logo (PDF only, used as fallback if Claude missed it) ---
             logo_info = None
@@ -828,7 +1746,74 @@ def process(file_path: str, output_dir: str, file_stem: str = None) -> list[dict
 
                 raw_blocks = sorted(raw_blocks, key=lambda b: (round(b.y / 10) * 10, b.x))
                 col_assignments = detect_columns(raw_blocks, canvas_w)
-                classified = classify_blocks(raw_blocks, canvas_h=canvas_h)
+                classified = classify_blocks(raw_blocks, canvas_h=canvas_h, canvas_w=canvas_w)
+
+                # R4-1: Cross-validate analyzer's category_header decisions against Claude vision's
+                # category list. Claude has full visual context (knows what's a section header vs an
+                # item) while the analyzer only sees per-block font/position. Two-way correction:
+                # (a) demote analyzer's category_header to item_name when Claude doesn't recognize
+                #     it AND the block isn't script-font (script font = trust analyzer)
+                # (b) promote analyzer's item_name to category_header when Claude DID list it
+                if claude_layout and claude_layout.get("menu_data"):
+                    claude_cat_names = set()
+                    for c in claude_layout["menu_data"].get("categories", []) or []:
+                        nm = (c.get("name") or "").strip().lower()
+                        if nm:
+                            claude_cat_names.add(nm)
+
+                    def _is_script_font(blk) -> bool:
+                        raw = (getattr(blk, "font_family_raw", "") or "").lower()
+                        if blk.font_family in ("decorative-script", "display"):
+                            return True
+                        if any(k in raw for k in ("signature", "script", "vibes", "brittany", "calligraph", "cursive")):
+                            return True
+                        return False
+
+                    reclassified = []
+                    upgrades = downgrades = 0
+                    for block, sem in classified:
+                        text_lc = block.text.strip().lower()
+                        # Strong match: exact or near-exact equality. The earlier
+                        # `cn in text_lc` substring path was too permissive — e.g.
+                        # cn='breakfast' matched 'the chateau breakfast 15' and
+                        # kept an item promoted to a category. Now require
+                        # exact match OR substring with similar lengths (±50%)
+                        # so that 'BORDEAUX, FRANCE (Left Bank)' still matches
+                        # cn='bordeaux france (left bank)' but a long-item-name
+                        # containing a short cat-name doesn't.
+                        def _close(a: str, b: str) -> bool:
+                            # a = analyzer text (lowercase), b = Claude category (lowercase).
+                            # Asymmetric:
+                            # • exact match → safe
+                            # • a is a substring of b → analyzer text is a partial of the
+                            #   Claude category name (e.g. analyzer "france" vs Claude
+                            #   "bordeaux, france (left bank)") → safe, treat as a match.
+                            # • b is a substring of a → Claude category embedded inside a
+                            #   longer analyzer string (e.g. Claude "breakfast" vs analyzer
+                            #   "the chateau breakfast 15") → DANGEROUS, would falsely
+                            #   promote an item to a category. Only allow when Claude's
+                            #   substring is "most of" the analyzer text (≥75%).
+                            if a == b:
+                                return True
+                            if a in b:
+                                return True
+                            if b in a and len(b) >= len(a) * 0.75:
+                                return True
+                            return False
+                        in_claude = text_lc in claude_cat_names or any(
+                            _close(text_lc, cn) for cn in claude_cat_names
+                        )
+                        new_sem = sem
+                        if sem == "category_header" and not in_claude and not _is_script_font(block):
+                            new_sem = "item_name"
+                            downgrades += 1
+                        elif sem in ("item_name", "other_text") and in_claude and len(text_lc) >= 3:
+                            new_sem = "category_header"
+                            upgrades += 1
+                        reclassified.append((block, new_sem))
+                    if upgrades or downgrades:
+                        print(f"[pipeline] R4-1 reclassify: {upgrades} promoted, {downgrades} demoted (claude_cats={len(claude_cat_names)})")
+                    classified = reclassified
 
                 menu_data = build_menu_data(
                     classified=classified,
@@ -837,6 +1822,39 @@ def process(file_path: str, output_dir: str, file_stem: str = None) -> list[dict
                     side=side_label,
                     num_separators=len(lines),
                 )
+
+                # R3-1: If analyzer didn't assign a restaurant_name (or assigned one that looks
+                # like a section header), fall back to Claude vision's menu_data.restaurant_name.
+                # Reason: PDF logos are graphics (no extractable text), so the analyzer often
+                # picks the biggest header text instead. Claude's vision pass reads the logo image.
+                if claude_layout is not None:
+                    claude_md = claude_layout.get("menu_data", {}) or {}
+                    claude_rn = (claude_md.get("restaurant_name") or "").strip()
+                    current = (menu_data.restaurant_name or "").strip() if menu_data.restaurant_name else ""
+
+                    # Names of detected category headers (so we don't accept "White Wines" as restaurant)
+                    header_names = {
+                        (c.name or "").strip().lower() for c in menu_data.categories
+                    }
+                    current_lc = current.lower()
+                    claude_rn_lc = claude_rn.lower()
+
+                    # R5-B: use the smarter _is_generic_name() helper so compound titles
+                    # like "White Wines / Red Wines Wine Menu" are treated as generic too.
+                    should_use_claude = (
+                        claude_rn
+                        and not _is_generic_name(claude_rn)                 # Claude pick must be real
+                        and claude_rn_lc not in header_names                # not a section header
+                        and (
+                            not current                                     # analyzer found nothing
+                            or current_lc in header_names                   # analyzer picked a category
+                            or _is_generic_name(current)                    # analyzer picked a generic title
+                        )
+                    )
+                    if should_use_claude:
+                        print(f"[pipeline] R3-1: restaurant_name '{current}' → '{claude_rn}' (Claude vision)")
+                        menu_data.restaurant_name = claude_rn
+
                 template = build_template(
                     classified=classified,
                     col_assignments=col_assignments,
@@ -859,40 +1877,199 @@ def process(file_path: str, output_dir: str, file_stem: str = None) -> list[dict
                     _inject_pdf_graphics(template, claude_layout, side_img, canvas_w, canvas_h, logo_info=logo_info)
                     # Enrich vector-exact PDF separators with S3 assets identified by Claude
                     _enrich_template_separators_from_claude(template, claude_layout, side_img, canvas_w, canvas_h)
+                    # R2-1: synthesise header flourishes directly under category_header
+                    # text elements — uses pixel-accurate PyMuPDF text positions so it
+                    # works even when Claude Vision's wavy-line bboxes are too far off
+                    # for _enrich_template_separators_from_claude's tight TOL_Y to match.
+                    _synthesize_header_flourishes(template, side_img, canvas_w, canvas_h, claude_layout=claude_layout)
+                    # R2-1: drop unlabelled decorative_divider separators left behind —
+                    # they render as empty bbox outlines because they never got an
+                    # image_data or semantic_label assignment from enrichment.
+                    template.elements = [
+                        e for e in template.elements
+                        if not (
+                            e.get("type") == "separator"
+                            and e.get("subtype") == "decorative_divider"
+                            and not e.get("image_data")
+                            and not e.get("semantic_label")
+                        )
+                    ]
                     # Remove cross-type positional duplicates and misplaced floral ornaments
                     _cleanup_duplicate_graphics(template)
 
-                # Dedicated decorator scan: one focused Anthropic API call to exhaustively
-                # find all ornaments, separator patterns, badges, and collage boxes.
-                # Runs after main extraction to catch anything still missing.
-                extra_decorators = _scan_pdf_decorators_via_claude(
-                    side_img, template.elements, canvas_w, canvas_h
-                )
-                # Dedup against existing template elements before injecting.
-                # Only inject an extra decorator if it sits within 40px of an existing
-                # NON-TEXT graphic element (separator/image/logo).  Text elements are
-                # everywhere so using them as anchors lets ornaments land on menu content.
-                _existing_graphic_centers = [
-                    (
-                        float((el.get("bbox") or {}).get("x", 0)) + float((el.get("bbox") or {}).get("w", 0)) / 2,
-                        float((el.get("bbox") or {}).get("y", 0)) + float((el.get("bbox") or {}).get("h", 0)) / 2,
-                    )
-                    for el in template.elements
-                    if el.get("type") in ("separator", "image", "logo")
-                ]
+                    # R17: HAPPY HOUR decorative-box injection. Bar & Patio source
+                    # has a HAPPY HOUR sun-burst graphic at the bottom-right with
+                    # decorative wordmark. Claude vision extracts the inner text
+                    # ("DAILY", "3-5PM", "BAR menu", "$7 select wines"…) but skips
+                    # the wordmark itself. Detect the cluster and inject a pixel-
+                    # crop image element covering the surrounding decorative box.
+                    _hh_kw = ("daily", "3-5pm", "3-5 pm", "happy hour")
+                    _hh_strong = ("happy hour",)
+                    hh_text_els = []
+                    for el in template.elements:
+                        if el.get("type") != "text":
+                            continue
+                        # Skip restaurant_name / page-title elements (they often
+                        # contain words like "bar menu" that aren't happy-hour markers).
+                        if el.get("subtype") == "restaurant_name":
+                            continue
+                        c = (el.get("content") or "").lower().strip()
+                        if any(k in c for k in _hh_kw):
+                            hh_text_els.append(el)
+                    # Spatial cluster check: keep only matches that are within
+                    # 600 px of each other (the HAPPY HOUR box is compact).
+                    if len(hh_text_els) >= 2:
+                        # Find the densest cluster — keep elements within 600 px
+                        # of the median y. If 'happy hour' itself appears,
+                        # always include it as the anchor.
+                        ys_all = [float(e["bbox"]["y"]) for e in hh_text_els]
+                        median_y = sorted(ys_all)[len(ys_all) // 2]
+                        hh_text_els = [e for e in hh_text_els if abs(float(e["bbox"]["y"]) - median_y) < 600]
+                    if len(hh_text_els) >= 2:
+                        xs = [(e["bbox"]["x"], e["bbox"]["x"] + e["bbox"]["w"]) for e in hh_text_els]
+                        ys = [(e["bbox"]["y"], e["bbox"]["y"] + e["bbox"]["h"]) for e in hh_text_els]
+                        # Pad generously on the LEFT to include the stylized
+                        # "HAPPY HOUR" sun-burst wordmark (sits to the left of
+                        # the inner content text in the source).
+                        # R19.2: 260 left pad cropped the leading "H" of "HAPPY".
+                        # Bump to 420; sun-rays also extend above so y-top → 100.
+                        # Clamp to the right half of the canvas so the wider
+                        # left-pad doesn't bleed into item-name text.
+                        cluster_x1 = min(x[0] for x in xs) - 420
+                        cluster_x2 = max(x[1] for x in xs) + 30
+                        cluster_y1 = min(y[0] for y in ys) - 100
+                        # R22.2: bottom pad +40 → +200. The "HAPPY HOUR" sun-burst
+                        # wordmark is stacked two lines ("HAPPY" top, "HOUR" below)
+                        # but the inner DAILY/3-5PM keyword text only covers the
+                        # top line's y-range. With only +40 the crop stopped just
+                        # below the "HAPPY" line, slicing "HOUR" + the bottom
+                        # border off. +200 captures the full two-line wordmark
+                        # without bleeding into menu items below (badge sits in
+                        # a column where there's no item content directly below).
+                        cluster_y2 = max(y[1] for y in ys) + 200
+                        # R19.2: clamp to right half of canvas so the wider
+                        # left-pad never captures menu item text in the centre/left.
+                        # R21.2: lower clamp from 0.45 → 0.30 of canvas_w.
+                        # The previous 0.45 floor was cropping off the "HAPPY"
+                        # half of the sun-burst wordmark on bar & Patio p2, where
+                        # the inner text cluster is more central (x≈905) and the
+                        # badge box starts around x≈600 (canvas_w=1700, ratio
+                        # 0.35). 0.30 → x=510 keeps the full wordmark while
+                        # still preventing the crop from bleeding into items
+                        # in the left column.
+                        cluster_x1 = max(int(canvas_w * 0.30), int(cluster_x1))
+                        cluster_x1 = max(0, int(cluster_x1))
+                        cluster_y1 = max(0, int(cluster_y1))
+                        cluster_x2 = min(canvas_w, int(cluster_x2))
+                        cluster_y2 = min(canvas_h, int(cluster_y2))
+                        if cluster_x2 > cluster_x1 + 50 and cluster_y2 > cluster_y1 + 50:
+                            # Verify cluster sits in lower-right or lower portion of canvas
+                            cx = (cluster_x1 + cluster_x2) / 2
+                            cy = (cluster_y1 + cluster_y2) / 2
+                            if cy > canvas_h * 0.5:
+                                try:
+                                    crop = side_img.crop((cluster_x1, cluster_y1, cluster_x2, cluster_y2))
+                                    buf = io.BytesIO()
+                                    crop.convert("RGB").save(buf, format="PNG")
+                                    import hashlib as _hashlib
+                                    hh_id = f"img_hhbox_{_hashlib.md5(f'hh_{cluster_x1}_{cluster_y1}'.encode()).hexdigest()[:8]}"
+                                    template.elements.insert(0, {
+                                        "id": hh_id,
+                                        "type": "image",
+                                        "subtype": "collage_box",
+                                        "semantic_label": None,
+                                        "bbox": {
+                                            "x": float(cluster_x1), "y": float(cluster_y1),
+                                            "w": float(cluster_x2 - cluster_x1),
+                                            "h": float(cluster_y2 - cluster_y1),
+                                        },
+                                        "image_data": base64.b64encode(buf.getvalue()).decode(),
+                                        "provenance": "r19_9_hh_crop",
+                                    })
+                                    # R19.9: PyMuPDF separately extracts the OCR text inside the
+                                    # HAPPY HOUR badge ("DAILY", "3-5PM", "$7 select house wines",
+                                    # "$5 draft beer", "20% off"). After we inject the pixel crop
+                                    # those text spans render TWICE — once inside the crop, once
+                                    # as floating text elements that land in the item list as
+                                    # ghost items. Drop any text whose center sits inside the
+                                    # crop bbox so the badge is rendered exactly once.
+                                    dropped = 0
+                                    keep = []
+                                    for _el in template.elements:
+                                        if _el.get("type") == "text":
+                                            _bb = _el.get("bbox") or {}
+                                            _cx_ = float(_bb.get("x", 0)) + float(_bb.get("w", 0)) / 2
+                                            _cy_ = float(_bb.get("y", 0)) + float(_bb.get("h", 0)) / 2
+                                            if (cluster_x1 <= _cx_ <= cluster_x2
+                                                    and cluster_y1 <= _cy_ <= cluster_y2):
+                                                dropped += 1
+                                                continue
+                                        keep.append(_el)
+                                    template.elements = keep
+                                    print(f"[pipeline] R17: injected HAPPY HOUR box pixel crop "
+                                          f"({cluster_x1},{cluster_y1}) {cluster_x2-cluster_x1}×{cluster_y2-cluster_y1}"
+                                          f" — dropped {dropped} overlapping text spans")
+                                except Exception as exc:
+                                    print(f"[pipeline] R17 happy-hour inject failed: {exc}")
 
-                for dec in extra_decorators:
-                    bd = dec.get("bbox") or {}
-                    cx = float(bd.get("x", 0)) + float(bd.get("w", 0)) / 2
-                    cy = float(bd.get("y", 0)) + float(bd.get("h", 0)) / 2
-                    near_graphic = any(
-                        abs(cx - gc_x) < 40 and abs(cy - gc_y) < 40
-                        for gc_x, gc_y in _existing_graphic_centers
-                    )
-                    if near_graphic:
-                        template.elements.append(dec)
-                        _existing_graphic_centers.append((cx, cy))
-                        print(f"[pipeline] PDF extra decorator anchored: {dec.get('semantic_label','?')}")
+                # R21.3: heritage wordmark synthesis. AMI FFL p1 has two small
+                # "the Château ON THE LAKE" / "the Château ANNA MARIA" wordmarks
+                # sitting just above "bolton landing, NY" / "anna maria island,
+                # FL" location lines. PyMuPDF only extracts the location text;
+                # the wordmark glyphs are missing. Pixel-crop from source.
+                # Use startswith to avoid matching the city-list footer
+                # ("SARASOTA ~ ANNA MARIA ~ BOLTON LANDING") which contains
+                # "bolton landing" as a substring but is a different layout.
+                try:
+                    _r21_heritage_keywords = ("bolton landing", "anna maria island")
+                    _r21_heritage_anchors = []
+                    for _el in template.elements:
+                        if _el.get("type") != "text":
+                            continue
+                        _c = (_el.get("content") or "").lower().lstrip()
+                        if any(_c.startswith(_k) for _k in _r21_heritage_keywords):
+                            _bd = _el.get("bbox") or {}
+                            _y = float(_bd.get("y", 0))
+                            if _y > canvas_h * 0.75 and _y < canvas_h * 0.99:
+                                _r21_heritage_anchors.append((_el.get("content", ""), _bd))
+                    for _name, _bd in _r21_heritage_anchors:
+                        _x1 = max(0, int(_bd.get("x", 0)) - 60)
+                        _x2 = min(canvas_w, int(_bd.get("x", 0) + _bd.get("w", 0)) + 60)
+                        _y2 = max(0, int(_bd.get("y", 0)) - 5)
+                        _y1 = max(0, _y2 - 150)
+                        if _x2 <= _x1 or _y2 <= _y1:
+                            continue
+                        try:
+                            _crop = side_img.crop((_x1, _y1, _x2, _y2))
+                            _buf = io.BytesIO()
+                            _crop.convert("RGB").save(_buf, format="PNG")
+                            import hashlib as _hashlib2
+                            _hid = f"img_heritage_{_hashlib2.md5(_name.encode()).hexdigest()[:8]}"
+                            template.elements.insert(0, {
+                                "id": _hid,
+                                "type": "image",
+                                "subtype": "heritage_wordmark",
+                                "semantic_label": None,
+                                "bbox": {
+                                    "x": float(_x1), "y": float(_y1),
+                                    "w": float(_x2 - _x1), "h": float(_y2 - _y1),
+                                },
+                                "image_data": base64.b64encode(_buf.getvalue()).decode(),
+                                "provenance": "r21_3_heritage_wm",
+                            })
+                            print(f"[pipeline] R21.3 heritage wordmark: above {_name!r} "
+                                  f"({_x1},{_y1}) {_x2-_x1}×{_y2-_y1}")
+                        except Exception as _exc:
+                            print(f"[pipeline] R21.3 heritage wm crop failed: {_exc}")
+                except Exception as exc:
+                    print(f"[pipeline] R21.3 heritage wm pass failed: {exc}")
+
+                # Decorator scan removed (Fix 2 — Option A): the second Anthropic
+                # decorator scan re-injected ornaments AFTER _cleanup_duplicate_graphics
+                # had already dropped them, anchored only to other (possibly misplaced)
+                # graphics. The extract_layout_surya_som pipeline is now the single
+                # source of decorators. Function definition is kept (deprecated) for
+                # callers that may still want a focused scan, but it is NOT invoked here.
 
                 # After graphics injection, reflect logo presence in menu_data
                 if any(el.get("type") == "logo" for el in template.elements):
@@ -905,8 +2082,29 @@ def process(file_path: str, output_dir: str, file_stem: str = None) -> list[dict
                 # 2. Use OpenCV for pixel-accurate physical shapes (lines, blobs, templates)
                 # 3. Use hybrid_engine to validate shapes using text context
                 
+                # Normalise bbox values to float on every Claude element BEFORE
+                # they reach any downstream code (hybrid_engine, sort keys, etc.).
+                # Claude vision occasionally returns string values inside bbox dicts
+                # which crash str/int comparisons (e.g. SRQ_BRUNCH_MENUS.png).
+                def _coerce_bbox_inplace(elements_list):
+                    for _el in elements_list or []:
+                        _bd = _el.get("bbox")
+                        if isinstance(_bd, dict):
+                            for _k in ("x", "y", "w", "h"):
+                                try:
+                                    _bd[_k] = float(_bd.get(_k, 0) or 0)
+                                except (TypeError, ValueError):
+                                    _bd[_k] = 0.0
+                        _col = _el.get("column")
+                        if _col is not None and not isinstance(_col, int):
+                            try:
+                                _el["column"] = int(_col)
+                            except (TypeError, ValueError):
+                                _el["column"] = 0
+                _coerce_bbox_inplace(claude_layout.get("elements", []))
+
                 text_elements = [e for e in claude_layout.get("elements", []) if e.get("type") == "text"]
-                
+
                 # Raw OpenCV extractions
                 img_lines = detect_separators(side_img)
                 # Convert RawLine objects to dicts for hybrid_engine
@@ -1054,8 +2252,13 @@ def process(file_path: str, output_dir: str, file_stem: str = None) -> list[dict
                 ]
                 claude_layout["elements"] = elements
 
+                def _safe_col(v):
+                    try:
+                        return int(v) if v is not None else 0
+                    except (TypeError, ValueError):
+                        return 0
                 num_cols = max(
-                    (el.get("column", 0) for el in elements if el.get("type") == "text"),
+                    (_safe_col(el.get("column", 0)) for el in elements if el.get("type") == "text"),
                     default=0,
                 ) + 1
                 md_raw = claude_layout.get("menu_data", {})
@@ -1067,6 +2270,29 @@ def process(file_path: str, output_dir: str, file_stem: str = None) -> list[dict
                     num_columns=num_cols,
                     logo_detected=any(e.get("type") == "logo" for e in elements),
                 )
+
+                # R7-extra: reject any "logo" element whose bbox is > 35% of the canvas
+                # area. Claude vision occasionally returns the entire menu image as a
+                # single logo on sparse / unusual layouts (e.g. EARLY BIRD MENU SRQ_2,
+                # kidsthanksgiving_menu). Without this check the runaway logo image
+                # gets drawn over every menu item by the renderer.
+                _canvas_area = max(1.0, float(canvas_w) * float(canvas_h))
+                pre_filter = elements
+                kept = []
+                dropped_logos = 0
+                for el in pre_filter:
+                    if el.get("type") == "logo":
+                        bd = el.get("bbox") or {}
+                        a = float(bd.get("w", 0)) * float(bd.get("h", 0))
+                        if a > _canvas_area * 0.35:
+                            dropped_logos += 1
+                            print(f"[pipeline] drop runaway logo bbox "
+                                  f"{bd.get('w', 0):.0f}×{bd.get('h', 0):.0f} "
+                                  f"({100 * a / _canvas_area:.1f}% of canvas)")
+                            continue
+                    kept.append(el)
+                if dropped_logos:
+                    elements = kept
 
                 # Crop logo pixels from source image for embedding in template
                 logo_image_data = None
@@ -1164,6 +2390,69 @@ def process(file_path: str, output_dir: str, file_stem: str = None) -> list[dict
                     logo_image_data=logo_image_data,
                     background_color=claude_layout.get("background_color", "#ffffff"),
                 )
+
+                # R6-2 (image-path defensive backport): drop empty collage_box
+                # elements that have neither image_data nor semantic_label — they
+                # render as nothing (or a debug bbox) and only confuse the renderer.
+                template.elements = [
+                    el for el in template.elements
+                    if not (
+                        el.get("type") == "image"
+                        and el.get("subtype") == "collage_box"
+                        and not el.get("image_data")
+                        and not el.get("semantic_label")
+                    )
+                ]
+
+                # R9-image: drop unlabelled ornament elements that aren't clearly
+                # in the page margin. OpenCV graphic-blob detection in the image
+                # branch over-fires on letter clusters and produces pixel crops
+                # of partial text (e.g. group_menu showed 95+ phantom "PPE" /
+                # "ENTR" fragments). Real decorations on these menus live in
+                # the outer 12% of the page (left/right margins). Anything
+                # unlabelled in the content area is noise.
+                _text_centers = [
+                    (
+                        float((e.get("bbox") or {}).get("x", 0)) + float((e.get("bbox") or {}).get("w", 0)) / 2,
+                        float((e.get("bbox") or {}).get("y", 0)) + float((e.get("bbox") or {}).get("h", 0)) / 2,
+                    )
+                    for e in template.elements if e.get("type") == "text"
+                ]
+                kept = []
+                dropped = 0
+                for el in template.elements:
+                    if el.get("type") == "image" and el.get("subtype") == "ornament" and not el.get("semantic_label"):
+                        bd = el.get("bbox") or {}
+                        w = float(bd.get("w", 0))
+                        h = float(bd.get("h", 0))
+                        x = float(bd.get("x", 0))
+                        y = float(bd.get("y", 0))
+                        cx = x + w / 2
+                        cy = y + h / 2
+                        # Margin zone: leftmost / rightmost 10% of canvas, OR top / bottom 6%.
+                        in_left_margin   = cx < canvas_w * 0.10
+                        in_right_margin  = cx > canvas_w * 0.90
+                        in_top_margin    = cy < canvas_h * 0.06
+                        in_bottom_margin = cy > canvas_h * 0.94
+                        in_margin = in_left_margin or in_right_margin or in_top_margin or in_bottom_margin
+                        # Always allow LARGE ornaments (real decorative banners > 25% canvas wide)
+                        is_large = w > canvas_w * 0.25 or h > canvas_h * 0.20
+                        # Drop tiny ones outright.
+                        if w < 100 and h < 40:
+                            dropped += 1
+                            continue
+                        if not in_margin and not is_large:
+                            # Content-area unlabelled ornament — drop.
+                            dropped += 1
+                            continue
+                        # Even in margin, drop if directly overlapping a text element.
+                        if in_margin and any(abs(cx - tx) < 80 and abs(cy - ty) < 40 for tx, ty in _text_centers):
+                            dropped += 1
+                            continue
+                    kept.append(el)
+                if dropped:
+                    print(f"[pipeline] R9-image: dropped {dropped} unlabelled ornament fragments (content-area or tiny)")
+                    template.elements = kept
             else:
                 # === IMAGE OCR FALLBACK ===
                 # Claude Vision unavailable — fall back to Surya/basic OCR for image files.
@@ -1172,7 +2461,7 @@ def process(file_path: str, output_dir: str, file_stem: str = None) -> list[dict
 
                 raw_blocks = sorted(raw_blocks, key=lambda b: (round(b.y / 10) * 10, b.x))
                 col_assignments = detect_columns(raw_blocks, canvas_w)
-                classified = classify_blocks(raw_blocks, canvas_h=canvas_h)
+                classified = classify_blocks(raw_blocks, canvas_h=canvas_h, canvas_w=canvas_w)
 
                 menu_data = build_menu_data(
                     classified=classified,
@@ -1207,6 +2496,39 @@ def process(file_path: str, output_dir: str, file_stem: str = None) -> list[dict
                 "num_elements": len(template.elements),
                 "num_categories": len(menu_data.categories),
             })
+
+    # R4-2: Cross-page restaurant_name propagation. Each page is processed in
+    # isolation, so wine-list page 2 might end up with "Wine Menu" while page 1
+    # correctly identifies "The Château Anna Maria". Find the first non-generic
+    # restaurant_name across all pages and apply it to any page that's missing one
+    # or carries a generic placeholder.
+    if len(results) > 1:
+        canonical_name = None
+        for r in results:
+            try:
+                with open(r["menu_data"]) as f:
+                    md = json.load(f)
+                rn = (md.get("restaurant_name") or "").strip()
+                # R5-B: use _is_generic_name() instead of exact-match set lookup.
+                if rn and not _is_generic_name(rn):
+                    canonical_name = rn
+                    break
+            except Exception:
+                continue
+        if canonical_name:
+            for r in results:
+                try:
+                    with open(r["menu_data"]) as f:
+                        md = json.load(f)
+                    rn = (md.get("restaurant_name") or "").strip()
+                    # R5-B: use _is_generic_name() so compound page-titles get overwritten.
+                    if _is_generic_name(rn):
+                        md["restaurant_name"] = canonical_name
+                        with open(r["menu_data"], "w") as f:
+                            json.dump(md, f, indent=2)
+                        print(f"[pipeline] R4-2: propagated restaurant_name '{canonical_name}' → page {r.get('page')}")
+                except Exception as exc:
+                    print(f"[pipeline] R4-2 propagation skipped for {r}: {exc}")
 
     return results
 

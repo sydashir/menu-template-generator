@@ -25,8 +25,15 @@ def validate_graphic_elements(
     """
     final_elements = []
     
-    # Pre-process text elements into a spatial index or sorted list for fast lookup
-    sorted_text = sorted(text_elements, key=lambda e: e["bbox"]["y"])
+    # Pre-process text elements into a spatial index or sorted list for fast lookup.
+    # Defensive: bbox values can leak through as strings from Claude vision output;
+    # coerce to float so the sort never crashes on str/int comparison.
+    def _safe_y(el):
+        try:
+            return float((el.get("bbox") or {}).get("y", 0) or 0)
+        except (TypeError, ValueError):
+            return 0.0
+    sorted_text = sorted(text_elements, key=_safe_y)
     
     # 1. Handle Matched Assets (Badges) — High Confidence
     # matched_assets should already have semantic_label (e.g. 'badge/food_network')

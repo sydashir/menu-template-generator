@@ -334,13 +334,75 @@
       return Number.isFinite(n) ? n : fallback;
     }
 
+    // R7-B-1: Multi-line text wrapping. Canvas 2D's fillText does not wrap;
+    // long item_description / category_header strings overflow or get clipped.
+    // This helper:
+    //   1. Splits content on '\n' first (respect explicit line breaks)
+    //   2. For each line, breaks at word boundaries based on maxWidth via measureText
+    //   3. Renders each resulting line at successive y positions (lineHeight apart)
+    // Line height defaults to fontSize * 1.2 (typographic norm).
+    //
+    // R7-B-5: We no longer pass `maxWidth` to ctx.fillText (which horizontally
+    // compresses glyphs instead of wrapping). This wrapping logic supersedes that.
+    function wrapText(ctx, text, x, y, maxWidth, lineHeight) {
+      if (!text) return;
+      // R-renderer-3: If the FULL text fits or just-barely-overflows the bbox
+      // (within 25%), draw on a single line rather than wrapping. This avoids
+      // splitting short titles like "Patio & Bar Menu" into "Patio & Bar" /
+      // "Menu" just because the bbox is slightly under-measured.
+      const fullWidth = ctx.measureText(String(text)).width;
+      if (fullWidth <= maxWidth * 1.25) {
+        ctx.fillText(String(text), x, y);
+        return;
+      }
+      // Respect explicit newlines in content first.
+      const paragraphs = String(text).split('\n');
+      let curY = y;
+      for (const para of paragraphs) {
+        if (para.length === 0) {
+          // empty line — still advance vertically
+          curY += lineHeight;
+          continue;
+        }
+        const words = para.split(/\s+/).filter(Boolean);
+        if (words.length === 0) {
+          curY += lineHeight;
+          continue;
+        }
+        let line = '';
+        for (const word of words) {
+          const test = line ? line + ' ' + word : word;
+          // measureText respects the currently-set ctx.font
+          const width = ctx.measureText(test).width;
+          if (width > maxWidth && line) {
+            ctx.fillText(line, x, curY);
+            curY += lineHeight;
+            line = word;
+          } else {
+            line = test;
+          }
+        }
+        if (line) {
+          ctx.fillText(line, x, curY);
+          curY += lineHeight;
+        }
+      }
+    }
+
     function currentTemplate() {
       return state.templates[state.index] || null;
     }
 
     function clearCanvas() {
       ctx.clearRect(0, 0, els.canvas.width, els.canvas.height);
-      ctx.fillStyle = '#ffffff';
+      // Use the template's declared background_color when it's a real hex,
+      // otherwise fall back to white. Source PDFs sometimes have themed
+      // backgrounds (e.g. valentines pink heart canvas) that the pipeline
+      // captures as a hex via Claude's sample.
+      const t = currentTemplate();
+      const bg = (t && t.canvas && typeof t.canvas.background_color === 'string')
+        ? t.canvas.background_color : '#ffffff';
+      ctx.fillStyle = /^#[0-9a-fA-F]{6}$/.test(bg) ? bg : '#ffffff';
       ctx.fillRect(0, 0, els.canvas.width, els.canvas.height);
     }
 
@@ -355,9 +417,27 @@
 
       const fontSize = Math.max(8, safeNum(s.font_size, 12)) * state.scale;
       const fontWeight = s.font_weight || 'normal';
-      const fontStyle = s.font_style || 'normal';
+      let fontStyle = s.font_style || 'normal';
       const color = s.color || '#000000';
       const align = s.text_align || 'left';
+
+      // R19.1: signature/script fonts ship with `font-style: normal` faces
+      // (e.g. BrittanySignatureRegular). Requesting italic forces a fallback
+      // chain that ends up at Great Vibes with faux italic+bold synthesis,
+      // which renders as bold-italic sans. Force normal on these families so
+      // the actual cursive face is used.
+      {
+        const rawLc = (s.font_family || '').toLowerCase();
+        if (
+          rawLc.includes('signature') ||
+          rawLc.includes('script') ||
+          rawLc.includes('vibes') ||
+          rawLc.includes('brittany') ||
+          rawLc.includes('calligraph')
+        ) {
+          fontStyle = 'normal';
+        }
+      }
 
       // Map font_family from JSON to loaded Google Fonts (or browser fallbacks).
       // If the family matches an @font-face we registered from template.fonts,
@@ -371,7 +451,22 @@
       };
       let fontFamilyCSS;
       const raw = s.font_family || 'sans-serif';
-      if (document.fonts.check(`12px "${raw}"`)) {
+      // R7-B-2: `document.fonts.check()` can throw on malformed family names
+      // (e.g. unescaped quotes) and may return false for newly-injected @font-face
+      // rules whose data: URL is still parsing. Wrap in try/catch so a hiccup in
+      // the check itself never blocks rendering — we just fall through to FONT_CSS.
+      // R19.7: `document.fonts.check()` is also unreliable in headless Playwright
+      // for @font-face data: URLs that ARE loaded — it returns false. Honour our
+      // own _injectedFamilies set (populated by injectFontFaces) as the source of
+      // truth instead of trusting the browser's check.
+      let fontRegistered = false;
+      try {
+        fontRegistered = (typeof _injectedFamilies !== 'undefined' && _injectedFamilies.has(raw))
+          || document.fonts.check(`12px "${raw}"`);
+      } catch (_e) {
+        fontRegistered = false;
+      }
+      if (fontRegistered) {
         // Registered as an embedded @font-face — use it, with a sensible fallback chain.
         const lc = raw.toLowerCase();
         const stack = lc.includes('signature') || lc.includes('script') || lc.includes('vibes')
@@ -395,7 +490,10 @@
       const ty = y + fontSize * 0.95;
 
       const content = (el.content || '').toString();
-      ctx.fillText(content, tx, ty, w);
+      // R7-B-1 / R7-B-5: Use word-wrapping helper instead of single fillText with
+      // maxWidth (which horizontally squashes glyphs instead of wrapping).
+      // Line height = fontSize * 1.2 (standard typographic baseline-to-baseline).
+      wrapText(ctx, content, tx, ty, w, fontSize * 1.2);
 
       if (els.showBBoxes.checked) {
         ctx.strokeStyle = '#60a5fa';
@@ -465,14 +563,27 @@
     function _drawSeparatorLine(el, x, y, w, h, style) {
       const isDecorative = el.subtype === 'decorative_divider';
       const isBorder = el.subtype === 'border';
-      ctx.strokeStyle = (style || el.style || {}).color || '#000000';
+      const st = style || el.style || {};
+      ctx.strokeStyle = st.color || '#000000';
+
+      // R7-B-3: A decorative_divider with NO image_data and NO semantic_label is
+      // an empty placeholder that previously rendered as an ugly dashed line in
+      // the middle of the bbox — visually distracting and definitely not in the
+      // source PDF. Skip it entirely.
+      if (isDecorative && !el.image_data && !el.semantic_label) {
+        return;
+      }
 
       if (isBorder) {
-        ctx.lineWidth = Math.max(1, safeNum((style || {}).stroke_width, 2)) * state.scale;
+        ctx.lineWidth = Math.max(1, safeNum(st.stroke_width, 2)) * state.scale;
         ctx.strokeRect(x, y, w, h);
       } else if (isDecorative) {
-        ctx.lineWidth = 1.5 * state.scale;
-        ctx.setLineDash([10 * state.scale, 5 * state.scale]);
+        // R7-B-3: When a decorative divider IS labelled but has no image_data,
+        // render a clean solid rule using the element's own style.color and
+        // style.stroke_width — NOT a dashed line. Preserves visual structure
+        // without inventing a dash pattern that wasn't in the source.
+        ctx.lineWidth = Math.max(1, safeNum(st.stroke_width, 2)) * state.scale;
+        ctx.setLineDash([]);
         ctx.beginPath();
         if ((el.orientation || 'horizontal') === 'vertical') {
           ctx.moveTo(x + w / 2, y); ctx.lineTo(x + w / 2, y + h);
@@ -480,9 +591,8 @@
           ctx.moveTo(x, y + h / 2); ctx.lineTo(x + w, y + h / 2);
         }
         ctx.stroke();
-        ctx.setLineDash([]);
       } else {
-        ctx.lineWidth = Math.max(1, safeNum((style || {}).stroke_width, 2)) * state.scale;
+        ctx.lineWidth = Math.max(1, safeNum(st.stroke_width, 2)) * state.scale;
         ctx.beginPath();
         if ((el.orientation || 'horizontal') === 'vertical') {
           ctx.moveTo(x + w / 2, y); ctx.lineTo(x + w / 2, y + h);
@@ -556,13 +666,24 @@
         }
         try {
           const img = await state.logoImageCache.get(key);
-          // Maintain aspect ratio (object-fit: contain)
-          const scale = Math.min(w / img.width, h / img.height);
-          const drawW = img.width * scale;
-          const drawH = img.height * scale;
-          const drawX = x + (w - drawW) / 2;
-          const drawY = y + (h - drawH) / 2;
-          ctx.drawImage(img, drawX, drawY, drawW, drawH);
+          // R7-B-4: collage_box panels need to FILL their bbox (the bbox is
+          // already sized to match the panel in the source). The previous
+          // "contain" centering made them appear smaller than the surrounding
+          // layout slot. Stretch-fill is appropriate for these flat promo
+          // panels — they are not aspect-sensitive logos.
+          //
+          // Other image subtypes keep the contain (aspect-preserving) behaviour
+          // so badges / ornaments / photos don't get distorted.
+          if (el.subtype === 'collage_box') {
+            ctx.drawImage(img, x, y, w, h);
+          } else {
+            const scale = Math.min(w / img.width, h / img.height);
+            const drawW = img.width * scale;
+            const drawH = img.height * scale;
+            const drawX = x + (w - drawW) / 2;
+            const drawY = y + (h - drawH) / 2;
+            ctx.drawImage(img, drawX, drawY, drawW, drawH);
+          }
         } catch { /* skip */ }
       }
 
@@ -876,14 +997,67 @@
     // Tracks which @font-face families we've already registered so a multi-page
     // PDF doesn't re-add the same TTF for each page.
     const _registeredFonts = new Set();
+    // R19.7: Source-of-truth set of @font-face family names that have been
+    // injected with non-empty data. The canvas renderer trusts this set instead
+    // of `document.fonts.check()` (which is unreliable in headless Playwright
+    // for data: URL @font-face rules).
+    const _injectedFamilies = new Set();
+
+    // R6-1: Canvas 2D's `ctx.font` does NOT consult `document.fonts` — it only
+    // sees fonts registered as CSS `@font-face` rules in the document's
+    // stylesheet (or system fonts / pre-linked <link>s). Without this, custom
+    // embedded fonts like "BrittanySignatureRegular" silently fall back to
+    // generic serif/sans and section headers render with the wrong typeface.
+    //
+    // Solution: inject a <style> tag containing `@font-face { src: url(data:
+    // font/ttf;base64,...) }` rules so the browser registers the embedded
+    // fonts in CSS — which IS what Canvas 2D looks at.
+    function injectFontFaces(fonts) {
+      if (!Array.isArray(fonts) || !fonts.length) return Promise.resolve();
+      let css = "";
+      for (const f of fonts) {
+        if (!f || !f.family || !f.data_base64) continue;
+        const key = `css|${f.family}|${f.weight || 'normal'}|${f.style || 'normal'}`;
+        if (_registeredFonts.has(key)) continue;
+        const fmt = (f.format === "opentype" || f.format === "otf") ? "opentype" : "truetype";
+        const familyEsc = String(f.family).replace(/"/g, '\\"');
+        css += `@font-face {
+          font-family: "${familyEsc}";
+          src: url(data:font/${fmt};base64,${f.data_base64}) format("${fmt}");
+          font-weight: ${f.weight || "normal"};
+          font-style: ${f.style || "normal"};
+          font-display: block;
+        }
+`;
+        _registeredFonts.add(key);
+        // R19.7: track family as definitively injected so the canvas-render
+        // path can bypass document.fonts.check() (which is flaky for data:
+        // URL @font-face rules in headless Chromium).
+        _injectedFamilies.add(f.family);
+      }
+      if (!css) return Promise.resolve();
+      const style = document.createElement("style");
+      style.setAttribute("data-injected-by", "renderer-template-fonts");
+      style.textContent = css;
+      document.head.appendChild(style);
+      // Wait for CSS-registered fonts to be ready so Canvas can use them.
+      return document.fonts.ready;
+    }
 
     // Convert a base64 TTF/OTF blob into a registered FontFace so the canvas
     // can render text in the document's original typeface (e.g. BrittanySignatureRegular)
     // instead of falling back to a generic family. Quiet on errors — text still
     // renders via the 5-way fallback if registration fails.
+    //
+    // R6-1: This function now ALSO injects CSS @font-face rules via
+    // injectFontFaces() — the FontFace API alone is insufficient for Canvas
+    // 2D (which only consults CSS-registered fonts). The legacy FontFace
+    // registration is kept for DOM rendering paths.
     async function registerTemplateFonts(template) {
       const fonts = Array.isArray(template && template.fonts) ? template.fonts : [];
       if (!fonts.length) return;
+      // R6-1: inject CSS @font-face rules so Canvas 2D can see the fonts.
+      const cssReady = injectFontFaces(fonts);
       const ready = [];
       for (const f of fonts) {
         if (!f || !f.family || !f.data_base64) continue;
@@ -905,6 +1079,7 @@
         }
       }
       await Promise.all(ready);
+      await cssReady;
       await document.fonts.ready;
     }
 
