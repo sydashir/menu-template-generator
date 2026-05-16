@@ -1,9 +1,36 @@
-# R19 QA LOG — Iteration 1 (post-R19.1 through R19.7)
+# R19 + R20 QA LOG — All Iterations
 
 Date: 2026-05-16
-Reviewer: QA Verifier agent (claude opus 4.7)
+Weights: text 0.30, logo 0.25, font 0.20, decorator 0.15, similarity 0.10.
 
-## Per-page scores
+## Per-iteration weighted averages
+
+| Iter | After | AMI BRUNCH | AMI FFL p1 | AMI FFL p2 | bar p1 | bar p2 | **Avg** |
+|---|---|---|---|---|---|---|---|
+| 0 | pre-R19 baseline (claimed) | 93 | 92 | 90 | 94 | 94 | 92.6 |
+| 0 | pre-R19 baseline (honest, per QA visual) | 78 | 70 | 55 | 70 | 73 | 69.2 |
+| 1 | R19.1–R19.7 | 87.4 | 71.6 | 67.7 | 71.6 | 73.7 | **74.4** |
+| 2 | R19.8 + R19.9 | ~92 | 71.6 | 67.7 | ~85 | ~85 | ~80.2 |
+| 3 (visual fresh) | iter-2 visual-confirmed | 90.05 | 75.4 | 76.5 | 87.05 | 87.05 | 83.2 |
+| 4 | R20.1 + R20.2 + R20.3 | 90.05 | 81.45 | 79.1 | 87.05 | 87.05 | 84.95 |
+| 5 | R20.4 + R20.5 (final) | **90.65** | **83.0** | **82.8** | **88.65** | **88.65** | **86.75** |
+
+## Iter-5 final scores (axis breakdown)
+
+| Page | Text | Logo | Font | Decor | Similar | Weighted |
+|---|---|---|---|---|---|---|
+| AMI BRUNCH 2022 | 92 | 85 | 95 | 92 | 90 | **90.65** |
+| AMI FFL p1 | 82 | 78 | 92 | 82 | 82 | **83.0** |
+| AMI FFL p2 (wine) | 87 | 70 | 92 | 82 | 85 | **82.8** |
+| bar & Patio p1 | 88 | 88 | 92 | 87 | 88 | **88.65** |
+| bar & Patio p2 | 88 | 88 | 92 | 87 | 88 | **88.65** |
+| **Average** | 87.4 | 81.8 | 92.6 | 86.0 | 86.6 | **86.75** |
+
+Total delta (honest baseline → iter-5): **+17.5%**. (74.4% claimed iter-1 → 86.75% iter-5: +12.4%.)
+
+## Iter-1 detail (preserved below)
+
+Reviewer: QA Verifier agent (claude opus 4.7) — iter 1.
 
 | Page                  | Text | Logo | Font | Decor | Similar | Weighted |
 |-----------------------|------|------|------|-------|---------|----------|
@@ -13,8 +40,6 @@ Reviewer: QA Verifier agent (claude opus 4.7)
 | bar & Patio p1        | 60   | 82   | 85   | 70    | 72      | **71.6** |
 | bar & Patio p2        | 65   | 80   | 85   | 72    | 74      | **73.7** |
 | **Average**           | 68   | 73.4 | 86   | 77.4  | 75.2    | **74.4** |
-
-Weights: text 0.30, logo 0.25, font 0.20, decorator 0.15, similarity 0.10.
 
 ## Per-page notes
 

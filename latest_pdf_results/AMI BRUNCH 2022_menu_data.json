@@ -99,18 +99,8 @@
         },
         {
           "name": "CHATEAU CAESAR SALAD",
-          "description": "baby romaine, poached farm-raised egg, parmesan tuile, roasted garlic anchovy aioli, bacon lardons",
+          "description": "baby romaine, poached farm-raised egg, parmesan tuile, roasted garlic anchovy aioli, bacon lardons grilled chicken +9 , shrimp +12, fish of the day 18",
           "price": "13"
-        },
-        {
-          "name": "ADD TO ANY SALAD:",
-          "description": null,
-          "price": null
-        },
-        {
-          "name": "grilled chicken +9 , shrimp +12, fish of the day",
-          "description": null,
-          "price": "18"
         }
       ]
     },

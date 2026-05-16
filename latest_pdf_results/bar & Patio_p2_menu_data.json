@@ -1,7 +1,7 @@
 {
   "source_file": "bar & Patio",
   "side": "full",
-  "restaurant_name": "The Chateau Restaurant & Bar",
+  "restaurant_name": "The Château Restaurant & Bar",
   "tagline": null,
   "address": null,
   "phone": null,
@@ -12,33 +12,18 @@
       "items": [
         {
           "name": "CAESAR SALAD SIDE 7 / ENTREE",
-          "description": "romaine, shaved parmesan, house made croutons, caesar dressing",
+          "description": "romaine, shaved parmesan, house made croutons, caesar dressing ADD CHICKEN +11, SHRIMP +15, FISH OF THE DAY 19",
           "price": "14"
-        },
-        {
-          "name": "ADD CHICKEN +11, SHRIMP +15, FISH OF THE DAY",
-          "description": null,
-          "price": "19"
         },
         {
           "name": "CLASSIC WEDGE SALAD",
-          "description": "iceberg, shaved red onion, cherry tomatoes, bacon, crumbled blue cheese,",
+          "description": "iceberg, shaved red onion, cherry tomatoes, bacon, crumbled blue cheese, ADD CHICKEN +11, SHRIMP +15, FISH OF THE DAY 19",
           "price": "14"
-        },
-        {
-          "name": "ADD CHICKEN +11, SHRIMP +15, FISH OF THE DAY",
-          "description": null,
-          "price": "19"
         },
         {
           "name": "KALE/ARUGULA/BEET SALAD SIDE 8/ENTREE",
-          "description": "baby arugula, goat cheese, walnuts, white balsamic lime vinaigrette",
+          "description": "baby arugula, goat cheese, walnuts, white balsamic lime vinaigrette ADD CHICKEN +11, SHRIMP +15, FISH OF THE DAY 19 salad dressing options: ranch, blue cheese, white balsamic, caesar",
           "price": "14"
-        },
-        {
-          "name": "ADD CHICKEN +11, SHRIMP +15, FISH OF THE DAY",
-          "description": "salad dressing options: ranch, blue cheese, white balsamic, caesar",
-          "price": "19"
         },
         {
           "name": "DAILY",

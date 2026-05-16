@@ -4,7 +4,7 @@
     "source_file": "AMI FFL DINNER MENU Combined (4)",
     "page": 2,
     "side": "full",
-    "generated_at": "2026-05-16T02:10:42.221112+00:00",
+    "generated_at": "2026-05-16T06:35:33.911377+00:00",
     "generator_version": "1.0.0",
     "num_columns": 3
   },
@@ -333,7 +333,7 @@
     {
       "id": "text_95f6cd71",
       "type": "text",
-      "subtype": "other_text",
+      "subtype": "item_price",
       "bbox": {
         "x": 2099.5,
         "y": 356.4,
@@ -375,7 +375,7 @@
     {
       "id": "text_e4bbe2d0",
       "type": "text",
-      "subtype": "other_text",
+      "subtype": "item_price",
       "bbox": {
         "x": 1024.3,
         "y": 389.5,
@@ -417,7 +417,7 @@
     {
       "id": "text_3927b6b4",
       "type": "text",
-      "subtype": "other_text",
+      "subtype": "item_price",
       "bbox": {
         "x": 2099.5,
         "y": 396.0,
@@ -459,7 +459,7 @@
     {
       "id": "text_1a0f540c",
       "type": "text",
-      "subtype": "other_text",
+      "subtype": "item_price",
       "bbox": {
         "x": 1024.3,
         "y": 429.1,
@@ -501,7 +501,7 @@
     {
       "id": "text_1aa89bce",
       "type": "text",
-      "subtype": "other_text",
+      "subtype": "item_price",
       "bbox": {
         "x": 2099.5,
         "y": 435.6,
@@ -543,7 +543,7 @@
     {
       "id": "text_2f4b9f37",
       "type": "text",
-      "subtype": "other_text",
+      "subtype": "item_price",
       "bbox": {
         "x": 1016.0,
         "y": 468.6,
@@ -585,7 +585,7 @@
     {
       "id": "text_da583e79",
       "type": "text",
-      "subtype": "other_text",
+      "subtype": "item_price",
       "bbox": {
         "x": 2099.5,
         "y": 475.2,
@@ -627,7 +627,7 @@
     {
       "id": "text_80305e20",
       "type": "text",
-      "subtype": "other_text",
+      "subtype": "item_price",
       "bbox": {
         "x": 1024.3,
         "y": 508.2,
@@ -669,7 +669,7 @@
     {
       "id": "text_adeb9c2a",
       "type": "text",
-      "subtype": "other_text",
+      "subtype": "item_price",
       "bbox": {
         "x": 2099.5,
         "y": 514.7,
@@ -711,7 +711,7 @@
     {
       "id": "text_586c11dc",
       "type": "text",
-      "subtype": "other_text",
+      "subtype": "item_price",
       "bbox": {
         "x": 1024.3,
         "y": 547.8,
@@ -837,7 +837,7 @@
     {
       "id": "text_9d4ed2bb",
       "type": "text",
-      "subtype": "other_text",
+      "subtype": "item_price",
       "bbox": {
         "x": 1015.1,
         "y": 712.1,
@@ -858,7 +858,7 @@
     {
       "id": "text_092ee8eb",
       "type": "text",
-      "subtype": "other_text",
+      "subtype": "item_price",
       "bbox": {
         "x": 2096.9,
         "y": 713.1,
@@ -921,7 +921,7 @@
     {
       "id": "text_6d9a9484",
       "type": "text",
-      "subtype": "other_text",
+      "subtype": "item_price",
       "bbox": {
         "x": 1023.4,
         "y": 751.6,
@@ -942,7 +942,7 @@
     {
       "id": "text_1c17cc50",
       "type": "text",
-      "subtype": "other_text",
+      "subtype": "item_price",
       "bbox": {
         "x": 2096.9,
         "y": 752.7,
@@ -1026,7 +1026,7 @@
     {
       "id": "text_c2209c84",
       "type": "text",
-      "subtype": "other_text",
+      "subtype": "item_price",
       "bbox": {
         "x": 2088.6,
         "y": 792.3,
@@ -1089,7 +1089,7 @@
     {
       "id": "text_43ff0605",
       "type": "text",
-      "subtype": "other_text",
+      "subtype": "item_price",
       "bbox": {
         "x": 1023.4,
         "y": 830.8,
@@ -1110,7 +1110,7 @@
     {
       "id": "text_ad46b066",
       "type": "text",
-      "subtype": "other_text",
+      "subtype": "item_price",
       "bbox": {
         "x": 2088.6,
         "y": 831.8,
@@ -1215,7 +1215,7 @@
     {
       "id": "text_f0bda997",
       "type": "text",
-      "subtype": "other_text",
+      "subtype": "item_price",
       "bbox": {
         "x": 1023.4,
         "y": 910.0,
@@ -1278,7 +1278,7 @@
     {
       "id": "text_a0afd6ce",
       "type": "text",
-      "subtype": "other_text",
+      "subtype": "item_price",
       "bbox": {
         "x": 1023.4,
         "y": 949.6,
@@ -1320,7 +1320,7 @@
     {
       "id": "text_c6b112f9",
       "type": "text",
-      "subtype": "other_text",
+      "subtype": "item_price",
       "bbox": {
         "x": 1015.1,
         "y": 989.1,
@@ -1341,7 +1341,7 @@
     {
       "id": "text_46084d8a",
       "type": "text",
-      "subtype": "other_text",
+      "subtype": "item_price",
       "bbox": {
         "x": 2099.5,
         "y": 991.4,
@@ -1572,7 +1572,7 @@
     {
       "id": "text_62542655",
       "type": "text",
-      "subtype": "other_text",
+      "subtype": "item_price",
       "bbox": {
         "x": 1022.1,
         "y": 1351.6,
@@ -1635,7 +1635,7 @@
     {
       "id": "text_1205cd3a",
       "type": "text",
-      "subtype": "other_text",
+      "subtype": "item_price",
       "bbox": {
         "x": 2108.9,
         "y": 1382.9,
@@ -1803,7 +1803,7 @@
     {
       "id": "text_c655ebc4",
       "type": "text",
-      "subtype": "other_text",
+      "subtype": "item_price",
       "bbox": {
         "x": 1022.1,
         "y": 1510.0,
@@ -2055,7 +2055,7 @@
     {
       "id": "text_634dc210",
       "type": "text",
-      "subtype": "other_text",
+      "subtype": "item_price",
       "bbox": {
         "x": 1022.1,
         "y": 1628.7,
@@ -2391,7 +2391,7 @@
     {
       "id": "text_c9ef8144",
       "type": "text",
-      "subtype": "other_text",
+      "subtype": "item_price",
       "bbox": {
         "x": 1022.1,
         "y": 1787.0,
@@ -2454,7 +2454,7 @@
     {
       "id": "text_1254108b",
       "type": "text",
-      "subtype": "other_text",
+      "subtype": "item_price",
       "bbox": {
         "x": 2098.0,
         "y": 1820.6,
@@ -2475,7 +2475,7 @@
     {
       "id": "text_d30abcee",
       "type": "text",
-      "subtype": "other_text",
+      "subtype": "item_price",
       "bbox": {
         "x": 1022.1,
         "y": 1826.6,
@@ -2853,7 +2853,7 @@
     {
       "id": "text_da0e62aa",
       "type": "text",
-      "subtype": "other_text",
+      "subtype": "item_price",
       "bbox": {
         "x": 2103.5,
         "y": 2084.3,
@@ -2916,7 +2916,7 @@
     {
       "id": "text_4701730e",
       "type": "text",
-      "subtype": "other_text",
+      "subtype": "item_price",
       "bbox": {
         "x": 999.8,
         "y": 2273.5,
@@ -3021,7 +3021,7 @@
     {
       "id": "text_a23b3dbe",
       "type": "text",
-      "subtype": "other_text",
+      "subtype": "item_price",
       "bbox": {
         "x": 1024.9,
         "y": 2315.2,
@@ -3147,7 +3147,7 @@
     {
       "id": "text_284b9edc",
       "type": "text",
-      "subtype": "other_text",
+      "subtype": "item_price",
       "bbox": {
         "x": 2113.1,
         "y": 2366.8,
@@ -3189,7 +3189,7 @@
     {
       "id": "text_674892f3",
       "type": "text",
-      "subtype": "other_text",
+      "subtype": "item_price",
       "bbox": {
         "x": 999.8,
         "y": 2398.5,
@@ -3231,7 +3231,7 @@
     {
       "id": "text_7affb920",
       "type": "text",
-      "subtype": "other_text",
+      "subtype": "item_price",
       "bbox": {
         "x": 2113.1,
         "y": 2406.4,
@@ -3357,7 +3357,7 @@
     {
       "id": "text_794baf10",
       "type": "text",
-      "subtype": "other_text",
+      "subtype": "item_price",
       "bbox": {
         "x": 1024.9,
         "y": 2481.8,
@@ -3399,7 +3399,7 @@
     {
       "id": "text_437195b6",
       "type": "text",
-      "subtype": "other_text",
+      "subtype": "item_price",
       "bbox": {
         "x": 2113.1,
         "y": 2485.5,
@@ -3441,7 +3441,7 @@
     {
       "id": "text_67bf9a0e",
       "type": "text",
-      "subtype": "other_text",
+      "subtype": "item_price",
       "bbox": {
         "x": 2113.1,
         "y": 2525.1,
@@ -3546,7 +3546,7 @@
     {
       "id": "text_e743c3de",
       "type": "text",
-      "subtype": "other_text",
+      "subtype": "item_price",
       "bbox": {
         "x": 1018.4,
         "y": 2846.8,
@@ -3588,7 +3588,7 @@
     {
       "id": "text_95d0c220",
       "type": "text",
-      "subtype": "other_text",
+      "subtype": "item_price",
       "bbox": {
         "x": 2123.8,
         "y": 2884.8,
@@ -3630,7 +3630,7 @@
     {
       "id": "text_f5602f5a",
       "type": "text",
-      "subtype": "other_text",
+      "subtype": "item_price",
       "bbox": {
         "x": 1010.1,
         "y": 2886.4,
@@ -3693,7 +3693,7 @@
     {
       "id": "text_d63c8ed8",
       "type": "text",
-      "subtype": "other_text",
+      "subtype": "item_price",
       "bbox": {
         "x": 1010.1,
         "y": 2925.9,
@@ -3756,7 +3756,7 @@
     {
       "id": "text_55daa11a",
       "type": "text",
-      "subtype": "other_text",
+      "subtype": "item_price",
       "bbox": {
         "x": 2123.8,
         "y": 2968.1,
@@ -3777,7 +3777,7 @@
     {
       "id": "text_e9e7f482",
       "type": "text",
-      "subtype": "other_text",
+      "subtype": "item_price",
       "bbox": {
         "x": 2123.8,
         "y": 3009.8,
@@ -3840,7 +3840,7 @@
     {
       "id": "text_d1cc9f9b",
       "type": "text",
-      "subtype": "other_text",
+      "subtype": "item_price",
       "bbox": {
         "x": 2123.8,
         "y": 3051.4,
@@ -3882,7 +3882,7 @@
     {
       "id": "text_8c3357a6",
       "type": "text",
-      "subtype": "other_text",
+      "subtype": "item_price",
       "bbox": {
         "x": 2123.8,
         "y": 3093.1,
@@ -3945,7 +3945,7 @@
     {
       "id": "text_d26dd9d8",
       "type": "text",
-      "subtype": "other_text",
+      "subtype": "item_price",
       "bbox": {
         "x": 1018.4,
         "y": 3101.3,
@@ -3987,7 +3987,7 @@
     {
       "id": "text_4f23f4f2",
       "type": "text",
-      "subtype": "other_text",
+      "subtype": "item_price",
       "bbox": {
         "x": 1018.4,
         "y": 3140.8,
@@ -4029,7 +4029,7 @@
     {
       "id": "text_122318a4",
       "type": "text",
-      "subtype": "other_text",
+      "subtype": "item_price",
       "bbox": {
         "x": 1018.4,
         "y": 3180.4,

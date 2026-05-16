@@ -4,7 +4,7 @@
     "source_file": "AMI BRUNCH 2022",
     "page": 1,
     "side": "full",
-    "generated_at": "2026-05-16T00:03:05.350681+00:00",
+    "generated_at": "2026-05-16T06:15:09.348936+00:00",
     "generator_version": "1.0.0",
     "num_columns": 2
   },
@@ -1522,7 +1522,7 @@
     {
       "id": "text_298eaf75",
       "type": "text",
-      "subtype": "item_name",
+      "subtype": "other_text",
       "bbox": {
         "x": 43.0,
         "y": 2171.0,
@@ -1585,7 +1585,7 @@
     {
       "id": "text_964e1bd9",
       "type": "text",
-      "subtype": "item_name",
+      "subtype": "item_description",
       "bbox": {
         "x": 43.0,
         "y": 2203.3,
@@ -1749,6 +1749,19 @@
         "text_align": "center"
       },
       "column": 0
+    },
+    {
+      "id": "img_1e592ec3",
+      "type": "image",
+      "subtype": "ornament",
+      "bbox": {
+        "x": 463.0,
+        "y": 244.0,
+        "w": 467.0,
+        "h": 70.0
+      },
+      "image_data": "iVBORw0KGgoAAAANSUhEUgAAAZAAAAA8CAYAAABIFuztAAADl0lEQVR4nO3c34vjRAAH8LlbBBEO4RgQQeZ5ngURRBBBBBH8Y88H4RBEOITjwOc8B+EQgiCCCNJbH0z3ZrNp0naTNN1+Pk/JtJtOS6ff+ZUNAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAJvbo1BXgfOQU6xDCpih6Uxz3lY89t/fvq7r55B7VBBYiQLiRU/w93D8UDnnuUX9f1c3nYSE5xeuqblbRTnKKr4rTq+L48UBZWd5Xdqe8qpt0dCW5KKtoGCwrp/hHGP/xvlVe1c1Hc9erlFN8GUbqVdXNFzPX4Xp7vESI5BRfFKfHBMAkATL23KpuPggQZgiQnOIPVd18M/V1OU5O8a8w0vuv6iYuWqkJ5BR/Dv2h8tVE17/uls0VIu17CWF4VPDpHK+9S07xt/L1i+OhYHk6b61Ym1kCZHssSJaTU/wn7DGqqOrm/cUqtZCc4k+hPxi/PvJ6d8KjuOa92kxO8cf2sPvjO+toag45xaY47R0FVXXzZMEqMWLqDv5sw/I2SG6+TMc2ZkLIKW46RfsExXuzVmrlcorPw9tRyd4NZig8tg4NkbYuWzc/tFXdfHnIdc5BTvHP4nRotPLuQlW6eGWnPoRpO/aLrIG0DejmyzTVNMND1I4k+uahS2VQvDN7pc5Y23jKz+vbgeeOhkdxndG2UzTcq0vvQOUU/y5O91mLCVXdlI9xgE6nZTPXbNDii+jtEL73S3OOw/hjtWsTg3PLwmE6OcVn4f/PdVPVzXc9j+8dHlvdECleY+uxadxhOcV/i9OxDtPGyGW3Yno0hBDeLNFpOekurHbuurc3suRWzTm1O55GFyEvfcppKe2PfAghhG2QHBMexTUeda57NTTK4XBFyOzclXdJay3FposQ7n4Oi87urHIbb7udcXSYe+obznKKr8NhWyMf5CL2uckpPpsiPArfbw/6RjdMrzMlNhQsD2JnWGeL9633e8q1tFUGSCmn+EvYcxvhmsrPcWvspZpqBCI8Tq+ziL/XTa9V3Xw4b62GdW4QHarn6mZlVh8g+8gp/hoWDIqlb6pjflOsgbBenS3Hh/w3hZOWV3XzWVgxDQBaU+/C4rx0bp6cPSiquvn44EqujEYAhTnuA4GHate2ObhIY+EgPOAtAQIdu0JCeMBtAgR6dMNCeABwkInuEwEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAGAf/wHmCXdnpo6nVAAAAABJRU5ErkJggg==",
+      "semantic_label": "ornament/floral_swash_centered"
     },
     {
       "id": "img_e6c250a8",

@@ -73,13 +73,8 @@
         },
         {
           "name": "ADD PROTEIN TO ANY SALAD:",
-          "description": null,
+          "description": "CHICKEN +12, SHRIMP +15, FISH OF DAY 19",
           "price": null
-        },
-        {
-          "name": "CHICKEN +12, SHRIMP +15, FISH OF DAY",
-          "description": null,
-          "price": "19"
         }
       ]
     },

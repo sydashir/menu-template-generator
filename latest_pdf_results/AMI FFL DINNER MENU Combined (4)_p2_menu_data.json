@@ -28,17 +28,17 @@
         {
           "name": "163 Champagne Brut La Cuv\u00e9e, Laurent-Perrier FR (NV)",
           "description": "165 Intercept Cr\u00e9mant de Bourgogne",
-          "price": null
+          "price": "70"
         },
         {
           "name": "161 Prosecco, Zardetto",
           "description": null,
-          "price": null
+          "price": "40"
         },
         {
           "name": "160 Cava, Cune SP",
           "description": null,
-          "price": null
+          "price": "48"
         },
         {
           "name": "164- LAURANT PERRIER SPLIT",
@@ -54,22 +54,22 @@
         {
           "name": "124 Petit Chablis, Domaine Louis Moreau FR",
           "description": "122 Bourgogne Blanc, JJ Vincent FR",
-          "price": null
+          "price": "60"
         },
         {
           "name": "123 Bordeaux Blanc, Chateau Ducasse FR",
           "description": null,
-          "price": null
+          "price": "40"
         },
         {
           "name": "125 Chateau Las Graviere Grand Vin Bordeaux, Gironde, FR",
           "description": null,
-          "price": null
+          "price": "47"
         },
         {
           "name": "126 Chablis, Domaine Larcohe, Saint Martin",
           "description": "127 Montrachet, Alain Chavy, Puligny-Montrachet, FR",
-          "price": null
+          "price": "84"
         }
       ]
     },
@@ -80,22 +80,22 @@
         {
           "name": "100 Chardonnay, The Calling, Sonoma Coast CA",
           "description": null,
-          "price": null
+          "price": "63"
         },
         {
           "name": "101 Chardonnay, Chappellet, Calesa Vineyards, Napa CA",
           "description": null,
-          "price": null
+          "price": "55"
         },
         {
           "name": "102 Chardonnay, Truchard Estate Roussanne, Napa, CA",
           "description": null,
-          "price": "114"
+          "price": "48"
         },
         {
           "name": "103 Chardonnay, Lewis Cellars, Napa, CA",
           "description": null,
-          "price": null
+          "price": "33"
         },
         {
           "name": "104 Sauvignon Blanc, Merry Edwards, Sonoma CA",
@@ -105,17 +105,17 @@
         {
           "name": "106 Chardonnay, Harken, Chardonnay, Barrel Fermented, CA",
           "description": null,
-          "price": null
+          "price": "65"
         },
         {
           "name": "107 Chardonnay, Frank Family, Carneros CA",
           "description": null,
-          "price": null
+          "price": "90"
         },
         {
           "name": "109 Chardonnay, Sonoma-Cutrer, Russian River Valley, CA",
           "description": null,
-          "price": null
+          "price": "42"
         },
         {
           "name": "108 Chardonnay, Cakebread Cellars, Napa, CA",
@@ -141,7 +141,7 @@
         {
           "name": "140 Riesling, Leeuwin Estate, Art Series, Margaret River, AU",
           "description": null,
-          "price": null
+          "price": "65"
         }
       ]
     },
@@ -162,7 +162,7 @@
         {
           "name": "201 Cabernet, The Calling, Alexander Valley CA",
           "description": null,
-          "price": null
+          "price": "93"
         },
         {
           "name": "202 Cabernet, Frank Family, Napa Valley CA",
@@ -182,7 +182,7 @@
         {
           "name": "204 Cabernet, Josh, Napa Valley CA",
           "description": null,
-          "price": null
+          "price": "53"
         },
         {
           "name": "205 Cabernet, Lewis Cellars, Napa Valley CA",
@@ -197,7 +197,7 @@
         {
           "name": "207 Cabernet, Simi, Sonoma CA",
           "description": null,
-          "price": null
+          "price": "80"
         },
         {
           "name": "209 Cabernet, Crossbarn, Paul Hobbs, Napa Valley, CA",
@@ -217,12 +217,12 @@
         {
           "name": "212 Pinot Noir, Cambria Julia\u2019s Vineyard, Santa Maria Valley, CA",
           "description": null,
-          "price": null
+          "price": "78"
         },
         {
           "name": "213 Pinot Noir, Crossbarn, Paul Hobbs, Sonoma Coast CA",
           "description": null,
-          "price": null
+          "price": "78"
         },
         {
           "name": "600 Cabernet, Caymus Special Selection, Napa Valley CA",
@@ -263,7 +263,7 @@
         {
           "name": "250 Domaine De La Solitude, Cotes du Rhone, Rhone Valley FR",
           "description": null,
-          "price": null
+          "price": "42"
         }
       ]
     },
@@ -309,7 +309,7 @@
         {
           "name": "620 Ch\u00e2teau l\u2019Eden M\u00e9doc, Bordeaux, 2016",
           "description": null,
-          "price": null
+          "price": "75"
         }
       ]
     },
@@ -325,7 +325,7 @@
         {
           "name": "613 Ch\u00e2teau Saint Andre Corbin, St. Georges-St. \u00c9milion, 2022",
           "description": null,
-          "price": null
+          "price": "67"
         }
       ]
     },
@@ -346,7 +346,7 @@
         {
           "name": "617 Bourgogne Pinot Noir, Philippe Girard, Grand Vin 2017",
           "description": null,
-          "price": null
+          "price": "65"
         },
         {
           "name": "254 Joseph Faiveley, Pinot Noir, Bourgogne, 2023",
@@ -361,12 +361,12 @@
         {
           "name": "255 Joseph Drouhin, Beaujolais-Villiages, Burgundy",
           "description": null,
-          "price": null
+          "price": "60"
         },
         {
           "name": "257 Bourgogne Pinot Noir, Prosper Maufoux, Saint-Aubin",
           "description": null,
-          "price": null
+          "price": "57"
         }
       ]
     },
@@ -377,12 +377,12 @@
         {
           "name": "214 Pinot Noir, Lemelson Thea's Selection, Williamette Valley, WA",
           "description": null,
-          "price": null
+          "price": "60"
         },
         {
           "name": "220 Cabernet, Grower Guild, WA",
           "description": null,
-          "price": null
+          "price": "36"
         },
         {
           "name": "221 Cabernet, Abeja, Columbia Valley WA",
@@ -392,12 +392,12 @@
         {
           "name": "222 Cabernet, Dusted Valley, Boomtown, Columbia Valley WA",
           "description": "223 Estate Red Blend, Figgins Walla Walla Valley WA",
-          "price": null
+          "price": "39"
         },
         {
           "name": "224 Pinot Noir, Pike Road, OR",
           "description": null,
-          "price": null
+          "price": "45"
         }
       ]
     },
@@ -413,17 +413,17 @@
         {
           "name": "230 Bush Vine Grenache, Yalumba, Barossa AU",
           "description": null,
-          "price": null
+          "price": "39"
         },
         {
           "name": "231 Cabernet, Yalumba, The Cigar, Coonawarra AU",
           "description": null,
-          "price": null
+          "price": "60"
         },
         {
           "name": "232 Cabernet, Vasse Felix, Filius, Margaret River AU",
           "description": null,
-          "price": "200"
+          "price": "87"
         }
       ]
     },
@@ -434,17 +434,17 @@
         {
           "name": "262 Baby Amarone, Zenato Ripassa, IT",
           "description": "615 Brunello, Casanova di Neri, Di Montalcino, IT",
-          "price": null
+          "price": "80"
         },
         {
           "name": "260 Barolo, Damilano, Lecinquevigne, IT",
           "description": "261 Bolgheri Rosso, ASKA, Banfi, Montalcino IT",
-          "price": null
+          "price": "90"
         },
         {
           "name": "252 Chianti, Palladio, DOCG, IT",
           "description": "243 Valtravieso, Red Blend, Vino de Paramo, Crianza, SP",
-          "price": null
+          "price": "50"
         }
       ]
     },

@@ -4,7 +4,7 @@
     "source_file": "bar & Patio",
     "page": 2,
     "side": "full",
-    "generated_at": "2026-05-16T00:08:45.044065+00:00",
+    "generated_at": "2026-05-16T06:20:55.595035+00:00",
     "generator_version": "1.0.0",
     "num_columns": 2
   },
@@ -129,7 +129,7 @@
     {
       "id": "text_f7239de4",
       "type": "text",
-      "subtype": "item_name",
+      "subtype": "item_description",
       "bbox": {
         "x": 494.0,
         "y": 594.0,
@@ -213,7 +213,7 @@
     {
       "id": "text_fcf6592a",
       "type": "text",
-      "subtype": "item_name",
+      "subtype": "item_description",
       "bbox": {
         "x": 478.3,
         "y": 805.2,
@@ -297,7 +297,7 @@
     {
       "id": "text_c0fa5524",
       "type": "text",
-      "subtype": "item_name",
+      "subtype": "item_description",
       "bbox": {
         "x": 478.3,
         "y": 962.4,
@@ -770,6 +770,25 @@
       "semantic_label": null
     },
     {
+      "id": "sep_fdf9ea42",
+      "type": "separator",
+      "subtype": "vertical_line",
+      "orientation": "vertical",
+      "bbox": {
+        "x": 629.0,
+        "y": 1825.0,
+        "w": 2.0,
+        "h": 230.0
+      },
+      "style": {
+        "color": "#000000",
+        "stroke_width": 1.5,
+        "stroke_style": "solid"
+      },
+      "image_data": null,
+      "semantic_label": null
+    },
+    {
       "id": "sep_81d58687",
       "type": "separator",
       "subtype": "vertical_line",
@@ -787,25 +806,6 @@
       },
       "image_data": null,
       "semantic_label": null
-    },
-    {
-      "id": "sep_67180da8",
-      "type": "separator",
-      "subtype": "ornament",
-      "orientation": "vertical",
-      "bbox": {
-        "x": 375.0,
-        "y": 1923.0,
-        "w": 510.0,
-        "h": 34.0
-      },
-      "style": {
-        "color": "#000000",
-        "stroke_width": 1.5,
-        "stroke_style": "solid"
-      },
-      "image_data": "iVBORw0KGgoAAAANSUhEUgAAAlgAAAAoCAYAAAAi24Q0AAABIUlEQVR4nO3dOw6CQBRAUTQugZrKgiW4/4olUFhZswgbC0OQn28IA+eUCG8obyZkLAoAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgJ5clN9dV2fSvta/uEfc6AAD78E/3zAqsoQXWLggAsGcR3TMZWN+LDA2b+h0AIBebdE9dlc2cilt6LwDA3mzSPWseFFkAQI6iu+ca81oAAIz6ZyfKLhYAkJMU3WMHCwAg2C3V4Loqn6lmAwAE6qIH2sECAAiWbAerfXX3VLMBAKJs+u24YxoAgLNwTAMAQM6c5A4AnEVk9/gvQgCAj6jumQys/rBfxBUAcAQR3TMrsMYWFFYAwBHpHgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAB27A2msnN1oLASDAAAAABJRU5ErkJggg==",
-      "semantic_label": "ornament/scroll_divider"
     },
     {
       "id": "sep_580e1820",
