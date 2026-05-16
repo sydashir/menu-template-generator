@@ -195,23 +195,8 @@
         },
         {
           "name": "LOBSTER RISOTTO",
-          "description": "maine lobster, saffron, cherry tomatoes,",
+          "description": "maine lobster, saffron, cherry tomatoes, **Warning** Consuming raw or undercooked meats, poultry, seafood, shellfish or eggs may increase your risk of food borne illness, especially if you have a medical condition",
           "price": "25"
-        },
-        {
-          "name": "As seen on:",
-          "description": null,
-          "price": null
-        },
-        {
-          "name": "“SUMMER RUSH”",
-          "description": null,
-          "price": null
-        },
-        {
-          "name": "“FOY RUSH”",
-          "description": "**Warning** Consuming raw or undercooked meats, poultry, seafood, shellfish or eggs may increase your risk of food borne illness, especially if you have a medical condition",
-          "price": null
         }
       ]
     },

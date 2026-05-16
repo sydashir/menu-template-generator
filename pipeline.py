@@ -1198,7 +1198,27 @@ def _inject_pdf_graphics(
         present_inline = set(present_inline_els)
         # Inject missing brands as inline-sized (90×90) within the panel bounds.
         missing = [b for b in _AS_SEEN_ON_BRANDS if b not in present_inline]
-        if missing and present_inline:  # only fire if at least one was present (proves it's an As-Seen-On menu)
+        # R20.1: also check for an "As seen on:" text element near or above the
+        # panel — if present, fire even when Claude returned no inline badges.
+        # Claude vision is non-deterministic; one run will detect food_network/
+        # hulu/youtube inline, the next returns the panel only. The text label
+        # is a much more stable signal.
+        has_aso_text = False
+        try:
+            for _txt in template.elements:
+                if _txt.get("type") != "text":
+                    continue
+                _tc = (_txt.get("content") or "").lower()
+                if "as seen on" in _tc or "featured on" in _tc:
+                    _bd = _txt.get("bbox") or {}
+                    _cx = float(_bd.get("x", 0)) + float(_bd.get("w", 0)) / 2
+                    _cy = float(_bd.get("y", 0)) + float(_bd.get("h", 0)) / 2
+                    if _cx < canvas_w * 0.55 and _cy > canvas_h * 0.45:
+                        has_aso_text = True
+                        break
+        except Exception:
+            pass
+        if missing and (present_inline or has_aso_text):
             # R19.5: real row-layout. Allocate one slot per badge across the
             # panel width; centre the badge inside each slot. No more vertical
             # stack with i*5 offsets that overlap when more than one is missing.

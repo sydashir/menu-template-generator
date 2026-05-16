@@ -170,9 +170,9 @@
           "price": "138"
         },
         {
-          "name": "609 Cabernet, Frank Family Reserve, Napa Valley CA",
+          "name": "609 Cabernet, Frank Family Reserve, Napa Valley CA 2021",
           "description": null,
-          "price": "2021"
+          "price": "159"
         },
         {
           "name": "203 Cabernet, Stonestreet, Alexander Valley CA",
@@ -205,9 +205,9 @@
           "price": "114"
         },
         {
-          "name": "616 Cabernet, Joseph Phelps Insignia, Napa, CA,",
+          "name": "616 Cabernet, Joseph Phelps Insignia, Napa, CA, 2022",
           "description": null,
-          "price": "2022"
+          "price": "475"
         },
         {
           "name": "211 Pinot Noir, Joseph Phelps, Sonoma County, CA",
@@ -250,9 +250,9 @@
           "price": "139"
         },
         {
-          "name": "601 Cabernet La Joie, V\u00e9rit\u00e9, Sonoma County CA",
+          "name": "601 Cabernet La Joie, V\u00e9rit\u00e9, Sonoma County CA 2017",
           "description": null,
-          "price": "2017"
+          "price": "499"
         }
       ]
     },
@@ -272,44 +272,44 @@
       "column": 1,
       "items": [
         {
-          "name": "605A Ch\u00e2teau Les Pagodes de Cos, St. Est\u00e8phe,",
+          "name": "605A Ch\u00e2teau Les Pagodes de Cos, St. Est\u00e8phe, 2014",
           "description": null,
-          "price": "2014"
+          "price": "213"
         },
         {
-          "name": "605B Ch\u00e2teau Les Pagodes de Cos, St. Est\u00e8phe,",
+          "name": "605B Ch\u00e2teau Les Pagodes de Cos, St. Est\u00e8phe, 2020",
           "description": null,
-          "price": "2020"
+          "price": "220"
         },
         {
-          "name": "606A Ch\u00e2teau Leoville Poyferre, St. Julien,",
+          "name": "606A Ch\u00e2teau Leoville Poyferre, St. Julien, 2017",
           "description": null,
-          "price": "2017"
+          "price": "285"
         },
         {
-          "name": "606B Ch\u00e2teau Leoville Poyferre, St. Julien,",
+          "name": "606B Ch\u00e2teau Leoville Poyferre, St. Julien, 2014",
           "description": null,
-          "price": "2014"
+          "price": "275"
         },
         {
-          "name": "607 Ch\u00e2teau Beau-Site, St. Est\u00e8phe,",
+          "name": "607 Ch\u00e2teau Beau-Site, St. Est\u00e8phe, 2017",
           "description": null,
-          "price": "2017"
+          "price": "120"
         },
         {
-          "name": "610 Ch\u00e2teau Batailley, Grand Cru Classe, Pauillac,",
+          "name": "610 Ch\u00e2teau Batailley, Grand Cru Classe, Pauillac, 2010",
           "description": null,
-          "price": "2010"
+          "price": "225"
         },
         {
-          "name": "608 Ch\u00e2teau Batailley, Lions de Batailley, Pauillac,",
+          "name": "608 Ch\u00e2teau Batailley, Lions de Batailley, Pauillac, 2018",
           "description": null,
-          "price": "2018"
+          "price": "150"
         },
         {
-          "name": "620 Ch\u00e2teau l\u2019Eden M\u00e9doc, Bordeaux,",
+          "name": "620 Ch\u00e2teau l\u2019Eden M\u00e9doc, Bordeaux, 2016",
           "description": null,
-          "price": "2016"
+          "price": null
         }
       ]
     },
@@ -318,14 +318,14 @@
       "column": 1,
       "items": [
         {
-          "name": "612 Ch\u00e2teau Lafleur-Gazin, Pomerol,",
+          "name": "612 Ch\u00e2teau Lafleur-Gazin, Pomerol, 2021",
           "description": null,
-          "price": "2021"
+          "price": "180"
         },
         {
-          "name": "613 Ch\u00e2teau Saint Andre Corbin, St. Georges-St. \u00c9milion,",
+          "name": "613 Ch\u00e2teau Saint Andre Corbin, St. Georges-St. \u00c9milion, 2022",
           "description": null,
-          "price": "2022"
+          "price": null
         }
       ]
     },
@@ -334,22 +334,22 @@
       "column": 1,
       "items": [
         {
-          "name": "614 Faiveley, Gevrey-Chambertin 1er Cru, Clos Des Issarts",
+          "name": "614 Faiveley, Gevrey-Chambertin 1er Cru, Clos Des Issarts 2023",
           "description": null,
-          "price": "2023"
+          "price": "485"
         },
         {
-          "name": "623 Faiveley, Gevrey-Chambertin Premier Cru Lavaux Saint-Jacques",
+          "name": "623 Faiveley, Gevrey-Chambertin Premier Cru Lavaux Saint-Jacques 2020",
           "description": null,
-          "price": "2020"
+          "price": "525"
         },
         {
-          "name": "617 Bourgogne Pinot Noir, Philippe Girard, Grand Vin",
+          "name": "617 Bourgogne Pinot Noir, Philippe Girard, Grand Vin 2017",
           "description": null,
-          "price": "2017"
+          "price": null
         },
         {
-          "name": "254 Joseph Faiveley, Pinot Noir, Bourgogne,",
+          "name": "254 Joseph Faiveley, Pinot Noir, Bourgogne, 2023",
           "description": null,
           "price": "225"
         },

@@ -8,10 +8,21 @@ _URL_RE = re.compile(r"(https?://|www\.)\S+|\b\w+\.(com|net|org|us|co|io)\b", re
 _ESTABLISHED_RE = re.compile(r"^est(\.|ablished)?\s+\d{4}\s*$", re.I)
 _CITY_LIST_RE = re.compile(r"^[A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z]+)*(?:\s*[~\-•·]\s*[A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z]+)*){1,}\s*$")
 
+# R20.3: As-Seen-On panel captions — "As seen on:", "Featured on:", and quoted
+# show names like "SUMMER RUSH" / "FOY RUSH". These are panel labels, not menu
+# items.
+_ASO_HEADER_RE = re.compile(r"^(as\s+seen\s+on|featured\s+on)\s*[:\-]?\s*$", re.I)
+_QUOTED_SHOWNAME_RE = re.compile(r"^[\"“‘'][\w\s&\-,.]{2,40}[\"”’']\s*$")
+
 
 def _is_footer(text: str) -> bool:
     t = text.strip()
-    return bool(_URL_RE.search(t) or _ESTABLISHED_RE.match(t) or _CITY_LIST_RE.match(t))
+    if _URL_RE.search(t) or _ESTABLISHED_RE.match(t) or _CITY_LIST_RE.match(t):
+        return True
+    # R20.3: panel captions are not items.
+    if _ASO_HEADER_RE.match(t) or _QUOTED_SHOWNAME_RE.match(t):
+        return True
+    return False
 
 
 PRICE_RE = re.compile(r"^\$?\s?\d{1,4}(?:[./]\d{1,4})?(?:\.\d{2})?$")
