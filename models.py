@@ -74,6 +74,7 @@ class TextElement(BaseModel):
     content: str
     style: TextStyle = Field(default_factory=TextStyle)
     column: int = 0
+    provenance: Optional[str] = None  # R23.8: tag injected/synth elements
 
 
 class LogoElement(BaseModel):
@@ -83,6 +84,7 @@ class LogoElement(BaseModel):
     image_data: Optional[str] = None
     image_path: Optional[str] = None
     position_hint: str = "top_center"
+    provenance: Optional[str] = None  # R23.8
 
 
 class ImageElement(BaseModel):
@@ -92,6 +94,7 @@ class ImageElement(BaseModel):
     bbox: BBox
     image_data: Optional[str] = None
     semantic_label: Optional[str] = None
+    provenance: Optional[str] = None  # R23.8: pixel-crop / synth provenance trail
 
 
 class SeparatorElement(BaseModel):
@@ -103,6 +106,7 @@ class SeparatorElement(BaseModel):
     style: LineStyle = Field(default_factory=LineStyle)
     image_data: Optional[str] = None  # Base64-encoded clean PNG from S3 (e.g. for wavy_line)
     semantic_label: Optional[str] = None # Canonical S3 label
+    provenance: Optional[str] = None  # R23.8
 
 
 class CanvasMeta(BaseModel):

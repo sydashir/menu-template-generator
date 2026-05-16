@@ -582,12 +582,15 @@ def _cleanup_duplicate_graphics(template) -> None:
         sl = el.get("semantic_label") or ""
         if sl.startswith("separator/"):
             continue  # benefit of the doubt — labelled as a real divider
-        # R19.3: narrow exemption — only exempt provenance-tagged synth
-        # header flourishes, AND only when there's no body text within 30 px
-        # below the ornament (else the swash would slice across an item row).
-        # R23.3: same exemption for source-cropped header ornaments.
+        # R23.7: source-cropped header ornaments live BETWEEN the header
+        # text and the item rows by source design. Keep unconditionally —
+        # they're pixel evidence, not synthesis. R19.3 body-below check
+        # only applies to the synth-flourish S3 path which was placed
+        # programmatically (and could land on top of an item row).
         prov = el.get("provenance") or ""
-        if prov in ("r19_6_synth_header_flourish", "r23_3_header_ornament_crop"):
+        if prov == "r23_3_header_ornament_crop":
+            continue
+        if prov == "r19_6_synth_header_flourish":
             el_cy_tmp = _cy(el)
             el_b_tmp = el.get("bbox") or {}
             el_y2_tmp = float(el_b_tmp.get("y", 0)) + float(el_b_tmp.get("h", 0))
@@ -598,7 +601,6 @@ def _cleanup_duplicate_graphics(template) -> None:
             ]
             if not body_below:
                 continue
-            # body text within 30 px below — drop the synth flourish.
             drop_ids.add(id(el))
             continue
         el_cy = _cy(el)

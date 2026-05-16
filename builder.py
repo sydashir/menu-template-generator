@@ -266,6 +266,7 @@ def build_template_from_claude(
                     bbox=bbox,
                     image_data=raw_el.get("image_data"),
                     semantic_label=raw_el.get("semantic_label"),
+                    provenance=raw_el.get("provenance"),  # R23.8
                 )
                 elements.append(img_el.model_dump())
 
