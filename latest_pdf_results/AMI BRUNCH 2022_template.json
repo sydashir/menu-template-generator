@@ -4,7 +4,7 @@
     "source_file": "AMI BRUNCH 2022",
     "page": 1,
     "side": "full",
-    "generated_at": "2026-05-16T06:15:09.348936+00:00",
+    "generated_at": "2026-05-16T08:22:27.426412+00:00",
     "generator_version": "1.0.0",
     "num_columns": 2
   },
@@ -241,7 +241,7 @@
     {
       "id": "text_f63df791",
       "type": "text",
-      "subtype": "other_text",
+      "subtype": "item_description",
       "bbox": {
         "x": 43.0,
         "y": 685.6,
@@ -262,7 +262,7 @@
     {
       "id": "text_4e3a0cc2",
       "type": "text",
-      "subtype": "other_text",
+      "subtype": "item_description",
       "bbox": {
         "x": 901.3,
         "y": 714.7,
@@ -367,7 +367,7 @@
     {
       "id": "text_2639b5c5",
       "type": "text",
-      "subtype": "other_text",
+      "subtype": "item_description",
       "bbox": {
         "x": 43.0,
         "y": 834.8,
@@ -724,7 +724,7 @@
     {
       "id": "text_655581d8",
       "type": "text",
-      "subtype": "other_text",
+      "subtype": "item_description",
       "bbox": {
         "x": 43.0,
         "y": 1208.6,
@@ -745,7 +745,7 @@
     {
       "id": "text_78f598c3",
       "type": "text",
-      "subtype": "other_text",
+      "subtype": "item_description",
       "bbox": {
         "x": 901.3,
         "y": 1228.6,
@@ -850,7 +850,7 @@
     {
       "id": "text_c21a6026",
       "type": "text",
-      "subtype": "other_text",
+      "subtype": "item_description",
       "bbox": {
         "x": 43.0,
         "y": 1354.7,
@@ -871,7 +871,7 @@
     {
       "id": "text_28926a5f",
       "type": "text",
-      "subtype": "other_text",
+      "subtype": "item_description",
       "bbox": {
         "x": 901.3,
         "y": 1355.9,
@@ -997,7 +997,7 @@
     {
       "id": "text_7cd35fd4",
       "type": "text",
-      "subtype": "other_text",
+      "subtype": "item_description",
       "bbox": {
         "x": 43.0,
         "y": 1503.4,

@@ -87,13 +87,34 @@ def _is_generic_name(name: Optional[str]) -> bool:
     return False
 
 
-def _resolve_as_seen_on_panel(graphic_els: list, canvas_w: int, canvas_h: int) -> None:
+def _resolve_as_seen_on_panel(graphic_els: list, canvas_w: int, canvas_h: int, text_els: Optional[list] = None) -> None:
     """
     R20.1: Lay out As-Seen-On panel badges in a single non-overlapping row inside
     the collage_box. Run AFTER _apply_s3_natural_bbox so the S3-natural bbox
-    normalization doesn't undo our row layout. Also handles the case where
-    Claude-detected badges arrive without going through R16's inject loop.
+    normalization doesn't undo our row layout.
+
+    R21.1: Anchor the row to the actual "As seen on:" text element, not whatever
+    Y the collage_box was detected at. Claude vision's collage_box bbox for the
+    Château family routinely lands ~800 px above the real panel (mid-page
+    instead of bottom). The caption text is a stable, accurate anchor.
     """
+    _AS_SEEN_ON = ("badge/food_network", "badge/youtube", "badge/hulu", "badge/best_of")
+    _SQUARE = {"badge/food_network", "badge/hulu", "badge/best_of", "badge/opentable_diners_choice"}
+
+    # R21.1: prefer the "As seen on:" text element as the anchor.
+    text_anchor = None
+    if text_els:
+        for el in text_els:
+            if el.get("type") != "text":
+                continue
+            c = (el.get("content") or "").lower().strip()
+            if c.startswith("as seen on") or c.startswith("featured on"):
+                tb = el.get("bbox") or {}
+                tcx = float(tb.get("x", 0)) + float(tb.get("w", 0)) / 2
+                if tcx < canvas_w * 0.55:  # left half only
+                    text_anchor = tb
+                    break
+
     panel_bd = None
     for el in graphic_els:
         if el.get("type") == "image" and el.get("subtype") == "collage_box":
@@ -103,18 +124,35 @@ def _resolve_as_seen_on_panel(graphic_els: list, canvas_w: int, canvas_h: int) -
             if cx < canvas_w * 0.55 and cy > canvas_h * 0.55:
                 panel_bd = bd
                 break
-    if not panel_bd:
+
+    # If we have neither a panel nor a text anchor, nothing to do.
+    if not panel_bd and not text_anchor:
         return
-    panel_x = float(panel_bd.get("x", 0))
-    panel_y = float(panel_bd.get("y", 0))
-    panel_w = float(panel_bd.get("w", 200))
-    panel_h = float(panel_bd.get("h", 200))
+
+    if text_anchor is not None:
+        # Anchor row to caption text. Lay badges in a row 20 px BELOW the caption.
+        panel_x = float(text_anchor.get("x", canvas_w * 0.05))
+        panel_y = float(text_anchor.get("y", 0)) + float(text_anchor.get("h", 0)) + 20.0
+        panel_w = max(float(text_anchor.get("w", 200)) * 3.0, 360.0)  # wide enough for 3+ badges
+        panel_h = 110.0
+        # Snap collage_box bbox to anchor area too so downstream renderers
+        # don't draw an empty panel rectangle in the wrong place.
+        if panel_bd is not None:
+            panel_bd["x"] = panel_x - 10
+            panel_bd["y"] = panel_y - 10
+            panel_bd["w"] = panel_w + 20
+            panel_bd["h"] = panel_h + 20
+    else:
+        panel_x = float(panel_bd.get("x", 0))
+        panel_y = float(panel_bd.get("y", 0))
+        panel_w = float(panel_bd.get("w", 200))
+        panel_h = float(panel_bd.get("h", 200))
     panel_x2 = panel_x + panel_w
     panel_y2 = panel_y + panel_h
 
-    _AS_SEEN_ON = ("badge/food_network", "badge/youtube", "badge/hulu", "badge/best_of")
-    _SQUARE = {"badge/food_network", "badge/hulu", "badge/best_of", "badge/opentable_diners_choice"}
-
+    # Collect badges. With text_anchor we accept any As-Seen-On brand regardless
+    # of its current bbox (it'll be moved into the row). Without, we still
+    # require centre-in-panel.
     in_panel: list = []
     for el in graphic_els:
         if el.get("subtype") != "badge":
@@ -125,13 +163,32 @@ def _resolve_as_seen_on_panel(graphic_els: list, canvas_w: int, canvas_h: int) -
         bd = el.get("bbox") or {}
         cx_e = float(bd.get("x", 0)) + float(bd.get("w", 0)) / 2
         cy_e = float(bd.get("y", 0)) + float(bd.get("h", 0)) / 2
-        if panel_x <= cx_e <= panel_x2 and panel_y <= cy_e <= panel_y2:
-            in_panel.append(el)
+        # Big right-side badges (food_network ≥ 300×300 at x > canvas_w*0.7) are
+        # not As-Seen-On panel members — they're the standalone gray "Best of"
+        # show badges. Skip them.
+        bw_chk = float(bd.get("w", 0))
+        if bw_chk >= 250 and cx_e > canvas_w * 0.7:
+            continue
+        if text_anchor is not None:
+            in_panel.append(el)  # claim all small ASO brands
+        else:
+            if panel_x <= cx_e <= panel_x2 and panel_y <= cy_e <= panel_y2:
+                in_panel.append(el)
 
     if not in_panel:
         return
 
-    in_panel.sort(key=lambda e: float((e.get("bbox") or {}).get("x", 0)))
+    # Dedup by semantic_label (keep first occurrence).
+    seen_labels = set()
+    deduped = []
+    for el in in_panel:
+        sl = el.get("semantic_label", "") or ""
+        if sl in seen_labels:
+            continue
+        seen_labels.add(sl)
+        deduped.append(el)
+    in_panel = deduped
+
     n = len(in_panel)
     slot_w = panel_w / n
 
@@ -152,8 +209,8 @@ def _resolve_as_seen_on_panel(graphic_els: list, canvas_w: int, canvas_h: int) -
         bd["x"] = panel_x + idx * slot_w + (slot_w - bw) / 2
         bd["y"] = panel_y + (panel_h - bh) / 2
         el["bbox"] = bd
-        el["provenance"] = "r20_1_aso_resolved"
-        print(f"[pipeline] R20.1 As-Seen-On row: {sl} → ({bd['x']:.0f},{bd['y']:.0f}) {bw:.0f}×{bh:.0f}")
+        el["provenance"] = "r21_1_aso_text_anchored" if text_anchor else "r20_1_aso_resolved"
+        print(f"[pipeline] {'R21.1' if text_anchor else 'R20.1'} As-Seen-On row: {sl} → ({bd['x']:.0f},{bd['y']:.0f}) {bw:.0f}×{bh:.0f}")
 
 
 def _apply_s3_natural_bbox(
@@ -1336,7 +1393,9 @@ def _inject_pdf_graphics(
     # 90×90 for square brands (food_network/hulu/best_of/diners_choice),
     # natural-aspect@h=90 for youtube. Image_data is already set by the S3
     # loop above; only bbox is adjusted here.
-    _resolve_as_seen_on_panel(graphic_els, canvas_w, canvas_h)
+    # R21.1: pass text elements so the resolver can anchor to the "As seen on:"
+    # caption when the collage_box bbox is at the wrong Y.
+    _resolve_as_seen_on_panel(graphic_els, canvas_w, canvas_h, text_els=template.elements)
 
     # Pixel crop for image elements that didn't resolve via S3.
     # Use a tight area cap per subtype:
@@ -1758,7 +1817,15 @@ def process(file_path: str, output_dir: str, file_stem: str = None) -> list[dict
                         cluster_y2 = max(y[1] for y in ys) + 40
                         # R19.2: clamp to right half of canvas so the wider
                         # left-pad never captures menu item text in the centre/left.
-                        cluster_x1 = max(int(canvas_w * 0.45), int(cluster_x1))
+                        # R21.2: lower clamp from 0.45 → 0.30 of canvas_w.
+                        # The previous 0.45 floor was cropping off the "HAPPY"
+                        # half of the sun-burst wordmark on bar & Patio p2, where
+                        # the inner text cluster is more central (x≈905) and the
+                        # badge box starts around x≈600 (canvas_w=1700, ratio
+                        # 0.35). 0.30 → x=510 keeps the full wordmark while
+                        # still preventing the crop from bleeding into items
+                        # in the left column.
+                        cluster_x1 = max(int(canvas_w * 0.30), int(cluster_x1))
                         cluster_x1 = max(0, int(cluster_x1))
                         cluster_y1 = max(0, int(cluster_y1))
                         cluster_x2 = min(canvas_w, int(cluster_x2))
@@ -1812,6 +1879,58 @@ def process(file_path: str, output_dir: str, file_stem: str = None) -> list[dict
                                           f" — dropped {dropped} overlapping text spans")
                                 except Exception as exc:
                                     print(f"[pipeline] R17 happy-hour inject failed: {exc}")
+
+                # R21.3: heritage wordmark synthesis. AMI FFL p1 has two small
+                # "the Château ON THE LAKE" / "the Château ANNA MARIA" wordmarks
+                # sitting just above "bolton landing, NY" / "anna maria island,
+                # FL" location lines. PyMuPDF only extracts the location text;
+                # the wordmark glyphs are missing. Pixel-crop from source.
+                # Use startswith to avoid matching the city-list footer
+                # ("SARASOTA ~ ANNA MARIA ~ BOLTON LANDING") which contains
+                # "bolton landing" as a substring but is a different layout.
+                try:
+                    _r21_heritage_keywords = ("bolton landing", "anna maria island")
+                    _r21_heritage_anchors = []
+                    for _el in template.elements:
+                        if _el.get("type") != "text":
+                            continue
+                        _c = (_el.get("content") or "").lower().lstrip()
+                        if any(_c.startswith(_k) for _k in _r21_heritage_keywords):
+                            _bd = _el.get("bbox") or {}
+                            _y = float(_bd.get("y", 0))
+                            if _y > canvas_h * 0.75 and _y < canvas_h * 0.99:
+                                _r21_heritage_anchors.append((_el.get("content", ""), _bd))
+                    for _name, _bd in _r21_heritage_anchors:
+                        _x1 = max(0, int(_bd.get("x", 0)) - 60)
+                        _x2 = min(canvas_w, int(_bd.get("x", 0) + _bd.get("w", 0)) + 60)
+                        _y2 = max(0, int(_bd.get("y", 0)) - 5)
+                        _y1 = max(0, _y2 - 150)
+                        if _x2 <= _x1 or _y2 <= _y1:
+                            continue
+                        try:
+                            _crop = side_img.crop((_x1, _y1, _x2, _y2))
+                            _buf = io.BytesIO()
+                            _crop.convert("RGB").save(_buf, format="PNG")
+                            import hashlib as _hashlib2
+                            _hid = f"img_heritage_{_hashlib2.md5(_name.encode()).hexdigest()[:8]}"
+                            template.elements.insert(0, {
+                                "id": _hid,
+                                "type": "image",
+                                "subtype": "heritage_wordmark",
+                                "semantic_label": None,
+                                "bbox": {
+                                    "x": float(_x1), "y": float(_y1),
+                                    "w": float(_x2 - _x1), "h": float(_y2 - _y1),
+                                },
+                                "image_data": base64.b64encode(_buf.getvalue()).decode(),
+                                "provenance": "r21_3_heritage_wm",
+                            })
+                            print(f"[pipeline] R21.3 heritage wordmark: above {_name!r} "
+                                  f"({_x1},{_y1}) {_x2-_x1}×{_y2-_y1}")
+                        except Exception as _exc:
+                            print(f"[pipeline] R21.3 heritage wm crop failed: {_exc}")
+                except Exception as exc:
+                    print(f"[pipeline] R21.3 heritage wm pass failed: {exc}")
 
                 # Decorator scan removed (Fix 2 — Option A): the second Anthropic
                 # decorator scan re-injected ornaments AFTER _cleanup_duplicate_graphics

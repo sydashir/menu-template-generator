@@ -4,7 +4,7 @@
     "source_file": "bar & Patio",
     "page": 1,
     "side": "full",
-    "generated_at": "2026-05-16T06:14:09.724685+00:00",
+    "generated_at": "2026-05-16T07:48:15.483626+00:00",
     "generator_version": "1.0.0",
     "num_columns": 3
   },
@@ -274,7 +274,7 @@
     {
       "id": "text_d6de95cc",
       "type": "text",
-      "subtype": "other_text",
+      "subtype": "item_description",
       "bbox": {
         "x": 903.6,
         "y": 650.6,
@@ -505,7 +505,7 @@
     {
       "id": "text_da5266c6",
       "type": "text",
-      "subtype": "other_text",
+      "subtype": "item_description",
       "bbox": {
         "x": 903.6,
         "y": 1006.8,
@@ -751,7 +751,7 @@
     {
       "id": "text_d18fc0a3",
       "type": "text",
-      "subtype": "other_text",
+      "subtype": "item_description",
       "bbox": {
         "x": 78.8,
         "y": 1486.5,
@@ -877,7 +877,7 @@
     {
       "id": "text_b3294bc2",
       "type": "text",
-      "subtype": "other_text",
+      "subtype": "item_description",
       "bbox": {
         "x": 78.8,
         "y": 1640.5,
@@ -982,7 +982,7 @@
     {
       "id": "text_4ec117b5",
       "type": "text",
-      "subtype": "other_text",
+      "subtype": "item_description",
       "bbox": {
         "x": 78.8,
         "y": 1794.6,
@@ -1108,7 +1108,7 @@
     {
       "id": "text_5fdcbb4b",
       "type": "text",
-      "subtype": "other_text",
+      "subtype": "item_description",
       "bbox": {
         "x": 1431.7,
         "y": 2008.7,

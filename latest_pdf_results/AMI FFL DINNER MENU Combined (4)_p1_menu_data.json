@@ -12,7 +12,7 @@
       "items": [
         {
           "name": "CHARCUTERIE & CHEESE BOARD",
-          "description": "imported & domestic meats and cheeses, appropriate accoutrements",
+          "description": "imported & domestic meats and cheeses, garlic crostini, appropriate accoutrements",
           "price": null
         },
         {
@@ -109,7 +109,7 @@
         },
         {
           "name": "GRILLED DUROC PORK LOIN 34 *",
-          "description": "coco espresso chili rub, sautéed spinach,",
+          "description": "coco espresso chili rub, sautéed spinach, roasted carrot puree",
           "price": null
         },
         {
@@ -119,7 +119,7 @@
         },
         {
           "name": "DUCK CONFIT FETTUCCINI",
-          "description": "house-made duck confit, chef's select mushrooms, fettuccini pasta, natural red wine reduction,",
+          "description": "house-made duck confit, chef's select mushrooms, fettuccini pasta, natural red wine reduction, shaved parmesan",
           "price": "38"
         },
         {
@@ -134,7 +134,7 @@
         },
         {
           "name": "MALBEC BRAISED SHORT RIBS",
-          "description": "creamy parmesan farro, roasted baby carrots, 20% gratuity will be added to the bill for parties of 6 or more guests. / $18 split entree fee",
+          "description": "creamy parmesan farro, roasted baby carrots, malbec demi bolton landing , NY 20% gratuity will be added to the bill for parties of 6 or more guests. / $18 split entree fee",
           "price": "44"
         }
       ]
@@ -165,7 +165,7 @@
         },
         {
           "name": "GRAHAM CRACKER CALAMARI",
-          "description": "baby arugula, subtle anchovy-lemon aioli,",
+          "description": "baby arugula, subtle anchovy-lemon aioli, sriracha",
           "price": "16"
         },
         {
@@ -190,7 +190,7 @@
         },
         {
           "name": "LOBSTER RISOTTO",
-          "description": "maine lobster, saffron, cherry tomatoes, **Warning** Consuming raw or undercooked meats, poultry, seafood, shellfish or eggs may increase your risk of food borne illness, especially if you have a medical condition",
+          "description": "maine lobster, saffron, cherry tomatoes, aged parmesan **Warning** Consuming raw or undercooked meats, poultry, seafood, shellfish or eggs may increase your risk of food borne illness, especially if you have a medical condition",
           "price": "25"
         }
       ]

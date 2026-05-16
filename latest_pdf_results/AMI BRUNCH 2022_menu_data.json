@@ -12,12 +12,12 @@
       "items": [
         {
           "name": "CRAB CAKE BENEDICT / CLASSIC",
-          "description": "caribbean style crab cake, poached eggs, hollandaise,",
+          "description": "caribbean style crab cake, poached eggs, hollandaise, grilled ciabatta",
           "price": "21/18"
         },
         {
           "name": "LOBSTER FRITTATA",
-          "description": "maine lobster meat, scallion, potato, hollandaise, bell",
+          "description": "maine lobster meat, scallion, potato, hollandaise, bell peppers, microgreens",
           "price": "24"
         },
         {
@@ -27,17 +27,17 @@
         },
         {
           "name": "B>Y>O OMELET",
-          "description": "pick 3 (bell pepper, onion, bacon, swiss cheese, spinach, tomato. cheddar cheese, sausage, ham, mushroom. Add .50 each for bacon, ham or sausage and each",
+          "description": "pick 3 (bell pepper, onion, bacon, swiss cheese, spinach, tomato. cheddar cheese, sausage, ham, mushroom. Add .50 each for bacon, ham or sausage and each additional topping",
           "price": "15"
         },
         {
           "name": "FRENCH TOAST",
-          "description": "french baguette, warm maple syrup, fresh berries,",
+          "description": "french baguette, warm maple syrup, fresh berries, powdered sugar",
           "price": "16"
         },
         {
           "name": "CRÈME BRÛLÉE PANCAKES/ PLAIN",
-          "description": "2 fluffy pancakes, pastry crème, brûléed sugar, berry",
+          "description": "2 fluffy pancakes, pastry crème, brûléed sugar, berry compote",
           "price": "18/15"
         },
         {
@@ -53,7 +53,7 @@
       "items": [
         {
           "name": "GRILLED CHICKEN CAPRESE",
-          "description": "balsamic marinated chicken breast, basil pesto, roasted heirloom tomatoes, fresh mozzarella, baby",
+          "description": "balsamic marinated chicken breast, basil pesto, roasted heirloom tomatoes, fresh mozzarella, baby spinach",
           "price": "17"
         },
         {
@@ -73,12 +73,12 @@
         },
         {
           "name": "CROQUE MONSIEUR",
-          "description": "thin-sliced turkey, swiss cheese, fried egg, brûléed",
+          "description": "thin-sliced turkey, swiss cheese, fried egg, brûléed aged parmesan",
           "price": "18"
         },
         {
           "name": "TURKEY BRIE SANDWICH",
-          "description": "fresh baked turkey, brie cheese, raspberry sauce,",
+          "description": "fresh baked turkey, brie cheese, raspberry sauce, grilled bread",
           "price": "18"
         },
         {

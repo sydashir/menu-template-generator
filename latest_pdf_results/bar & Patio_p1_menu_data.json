@@ -27,7 +27,7 @@
         },
         {
           "name": "CHICKEN TENDERS",
-          "description": "roasted heirloom tomatoes, fried capers, saffron aioli, truffle oil, shaved parmesan",
+          "description": "roasted heirloom tomatoes, fried capers, saffron aioli, truffle oil, shaved parmesan served with fries",
           "price": "14"
         },
         {
@@ -52,7 +52,7 @@
         },
         {
           "name": "TRUFFLE FRIES",
-          "description": null,
+          "description": "truffle or plain",
           "price": "14/7"
         }
       ]
@@ -84,7 +84,7 @@
         },
         {
           "name": "ROMA WHITE •",
-          "description": "Jen’s family recipe plum tomato sauce, mozzarella, mozzarella, ricotta, grated parmesan cheese, olive oil : spicy soppressata +2",
+          "description": "Jen’s family recipe plum tomato sauce, mozzarella, mozzarella, ricotta, grated parmesan cheese, olive oil basil, olive oil ADD : spicy soppressata +2",
           "price": "$18"
         },
         {
@@ -94,7 +94,7 @@
         },
         {
           "name": "PEPPERONI •",
-          "description": "maine lobster, cream alfredo, chives, white cheddar Jen’s family recipe plum tomato sauce, mozzarella,",
+          "description": "maine lobster, cream alfredo, chives, white cheddar Jen’s family recipe plum tomato sauce, mozzarella, pepperoni",
           "price": "$18"
         },
         {
@@ -104,7 +104,7 @@
         },
         {
           "name": "MUSHROOM •",
-          "description": "prosciutto, lemon/olive oil/sea salt tossed arugula Jen’s family recipe plum tomato sauce, mozzarella,",
+          "description": "prosciutto, lemon/olive oil/sea salt tossed arugula Jen’s family recipe plum tomato sauce, mozzarella, mushrooms",
           "price": "$18"
         },
         {
@@ -119,7 +119,7 @@
         },
         {
           "name": "MARGHERITA •",
-          "description": "Jen’s family recipe plum tomato sauce, fresh mozzarella, fresh tomatoes, fresh basil",
+          "description": "Jen’s family recipe plum tomato sauce, fresh mozzarella, fresh tomatoes, fresh basil wines",
           "price": "$18"
         }
       ]

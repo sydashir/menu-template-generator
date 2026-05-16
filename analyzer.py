@@ -380,6 +380,14 @@ def _classify(b: RawBlock, max_font: float, header_zone: float, restaurant_assig
     if is_upper_content:
         return "item_name"
 
+    # R21.5: lowercase continuation lines like "peppers, microgreens" (20 chars
+    # exactly) or "fresh hollandaise sauce" were falling to other_text because
+    # of the `> 20` length floor. Multi-line descriptions in AMI BRUNCH 2022
+    # (CRAB CAKE BENEDICT, LOBSTER FRITTATA, …) lose their 2nd line this way.
+    # Lower-case + reasonable length → description.
+    if len(text) >= 5 and text[0].islower():
+        return "item_description"
+
     if len(text) > 20:
         return "item_description"
 
@@ -426,19 +434,29 @@ def build_menu_data(
         if s != "item_price":
             continue
         my_col = col_assignments[i] if i < len(col_assignments) else 0
-        if my_col == 0:
-            continue  # left column already aligns naturally
         my_y = b.y + b.h / 2
-        # Find nearest item_name in a STRICTLY LOWER column index with |Δy|<=10
+        my_x = b.x + b.w / 2
+        # Find nearest item_name with |Δy|<=10. Accept either:
+        #   (a) strictly LOWER column index (3-col wine layouts), OR
+        #   (b) R21.6: SAME column with the price block's x noticeably to the
+        #       right of the item_name x (2-col food layouts with right-aligned
+        #       prices in the same column).
         best = None
         for j, nb, ncol in name_idx:
-            if ncol >= my_col:
-                continue
             if j in paired_prices:
                 continue
             ny = nb.y + nb.h / 2
             dy = abs(ny - my_y)
             if dy > 10:
+                continue
+            nx = nb.x + nb.w / 2
+            if ncol < my_col:
+                # Cross-column case (R19.6 wine layout)
+                pass
+            elif ncol == my_col and (my_x - nx) > 100:
+                # R21.6: same-column right-aligned price (food layout)
+                pass
+            else:
                 continue
             if best is None or dy < best[0]:
                 best = (dy, j)

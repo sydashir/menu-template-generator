@@ -1,7 +1,7 @@
 {
   "source_file": "bar & Patio",
   "side": "full",
-  "restaurant_name": "The Château Restaurant & Bar",
+  "restaurant_name": "The Chateau Restaurant & Bar",
   "tagline": null,
   "address": null,
   "phone": null,
@@ -17,12 +17,12 @@
         },
         {
           "name": "CLASSIC WEDGE SALAD",
-          "description": "iceberg, shaved red onion, cherry tomatoes, bacon, crumbled blue cheese, ADD CHICKEN +11, SHRIMP +15, FISH OF THE DAY 19",
+          "description": "iceberg, shaved red onion, cherry tomatoes, bacon, crumbled blue cheese, blue cheese dressing ADD CHICKEN +11, SHRIMP +15, FISH OF THE DAY 19",
           "price": "14"
         },
         {
           "name": "KALE/ARUGULA/BEET SALAD SIDE 8/ENTREE",
-          "description": "baby arugula, goat cheese, walnuts, white balsamic lime vinaigrette ADD CHICKEN +11, SHRIMP +15, FISH OF THE DAY 19 salad dressing options: ranch, blue cheese, white balsamic, caesar",
+          "description": "kale, baby arugula, goat cheese, walnuts, white balsamic lime vinaigrette ADD CHICKEN +11, SHRIMP +15, FISH OF THE DAY 19 salad dressing options: ranch, blue cheese, white balsamic, caesar",
           "price": "14"
         },
         {
