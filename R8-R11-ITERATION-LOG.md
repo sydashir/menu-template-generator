@@ -21,263 +21,8 @@ The goal: avoid re-treading the same dead-ends, know what already failed and why
 
 ---
 
-## R8.2 — Brand badge: skip S3 asset for lower-right zone
+## R17 — HAPPY HOUR pixel-crop synthesis
 
-| | |
-|---|---|
-| **Trigger** | AMI FFL snapshot showed food_network / Diners' Choice badges as colored circles (S3 small-version PNGs stretched 200×200). Source has them as large GRAY badges. |
-| **Hypothesis** | `_apply_s3_natural_bbox` is using the small inline-style S3 PNG even for standalone-style placements. local_assets/ doesn't have gray variants. |
-| **Verification** | Confirmed by decoding `image_data` from JSON — was the small orange/red colored PNG. local_assets inventory: only 100-px colored versions. |
-| **Fix** | `pipeline.py:_inject_pdf_graphics` — for `badge/food_network` and `badge/opentable_diners_choice` with `cy > canvas_h*0.6 AND cx > canvas_w*0.55`, skip S3 resolution. Fall through to pixel-crop loop which captures actual pixels from source. |
-| **Expected** | Badges in lower-right zone show actual gray pixels from source. |
-| **Actual** | After R8.2: pixel crop happened BUT bbox stayed at Claude's reported 52×52 → cropped a tiny irrelevant fragment. Mixed result. (See R11 for follow-up fix.) |
-| **Status** | 🟡 Partial — pixel crop fired but bbox too small. Needed R11 size enforcement. |
-| **Side effects** | Other badge labels (yelp, hulu, youtube) unaffected (only the two big-brand labels are in the exception set). |
-
----
-
-## R9.1 — Synth flourish cleanup exemption
-
-| | |
-|---|---|
-| **Trigger** | Logs said 4 synth flourishes fired under AMI BRUNCH headers; final JSON had only 1. |
-| **Hypothesis** | `_cleanup_duplicate_graphics` Fix-2 was dropping them because the first menu item below the swash is within 30 px of the swash center, and "item is body text → drop". |
-| **Verification** | Traced bbox math: synth swash at `y_header + 68`, first item at `y_header + 80-100` → 24 px between centers → drop fires. |
-| **Fix** | `pipeline.py:_cleanup_duplicate_graphics` Fix-2 — exempt ornaments with `semantic_label` starting with `ornament/floral_swash`, `ornament/calligraphic_rule`, `ornament/scroll_divider`, `ornament/diamond_rule`, `ornament/vine_separator`. Also exempt when nearby text neighbours are EXCLUSIVELY above-the-ornament AND header-like. |
-| **Expected** | All 4-5 synth flourishes per page survive cleanup. |
-| **Actual** | AMI BRUNCH v8: 4 synth flourishes in final JSON ✓. AMI FFL v10 p1: 3 flourishes (Broths & Greens, Entrées, Sides) — Sharable and Starters skipped because a real ornament was already detected within 40 px (acceptable behaviour). |
-| **Status** | ✅ Win. |
-| **Side effects** | Could in theory keep a misplaced flourish that should be dropped, but the labels are specific enough that this hasn't happened. |
-
----
-
-## R9.2 — Image-path R9-image filter (drop content-area unlabeled ornaments)
-
-| | |
-|---|---|
-| **Trigger** | group_menu_partymenu rendered output showed phantom "PPE" / "ENTR" text fragments scattered between section headers. |
-| **Hypothesis** | OpenCV graphic-blob detection in the image branch (`detect_graphic_blobs`) detected letter clusters as graphic blobs. Pixel-crop fallback captured them as `image/ornament` with no semantic_label. The image branch doesn't run `_cleanup_duplicate_graphics` so they survived. |
-| **Verification** | JSON inspection: 95+ unlabeled `image/ornament` entries with bboxes 30×40 to 100×30, all in the content area (not margins). Decoded image_data of one — confirmed it was a partial letter crop. |
-| **Fix (first attempt)** | `pipeline.py` image branch — filter unlabeled ornaments: drop if w<100 AND h<40, OR if overlapping any text element (within 80 px x and 40 px y). |
-| **Actual (first attempt)** | Dropped 95 but 57 still survived because their h>40 or they didn't overlap a text-element center directly (sat between text lines). |
-| **Fix (revised, R9.2b)** | Tightened: drop if w<100 AND h<40, OR (not in margin AND not large). Margin = leftmost/rightmost 10% OR top/bottom 6%. Large = w > 25% canvas_w OR h > 20% canvas_h. |
-| **Expected** | All content-area unlabeled ornaments dropped; only legitimate margin decorations (green leaves on group_menu's left side) survive. |
-| **Actual** | Pending re-run. |
-| **Status** | 🟡 In progress. |
-| **Side effects to watch** | Could drop legitimate decorations that aren't in extreme margins. Mitigation: anything >25% canvas wide passes regardless. |
-
----
-
-## R10 — Brand badge snap displacement threshold loosened
-
-| | |
-|---|---|
-| **Trigger** | AMI FFL v9: R7-C snap was supposed to move badges down but didn't fire. Diners' Choice cropped wrong menu-item region. |
-| **Hypothesis** | R7-C threshold `(target_y_min - current_y) > canvas_h * 0.15` requires 510 px displacement on AMI FFL. The actual displacement Claude reported was only 341 px (badge at y=2107, target at y=2448), so snap didn't trigger. |
-| **Verification** | Manual math: 341 < 510 confirmed. |
-| **Fix** | `pipeline.py` R7-C — threshold from `0.15` to `0.05` (= 170 px). Added `cx > canvas_w * 0.55` guard so left-side small inline badges (inside As-Seen-On panel) don't get snapped. |
-| **Expected** | Both AMI FFL brand badges snap from Claude-reported y to the bottom-right brand zone. |
-| **Actual** | AMI FFL v10 log: `R7-C badge snap: badge/opentable_diners_choice y 1898 → 2652` AND `badge/food_network y 1578 → 2312`. ✓ |
-| **Status** | ✅ Win for snap. (Pixel crop still failed at v10 due to size — see R11.) |
-| **Side effects** | Small inline badges on the LEFT side don't trigger (cx guard). Tested via group_menu / Sarasota which don't have these badges — no false snap. |
-
----
-
-## R11 — Enforce 250×250 brand-badge size when skipping S3
-
-| | |
-|---|---|
-| **Trigger** | AMI FFL v10: badges snapped to correct y but Diners' Choice rendered 52×52 — Claude's tiny reported size. |
-| **Hypothesis** | R8.2 skip-S3 path bypasses `_apply_s3_natural_bbox` which is where the 200-px size hint was applied. Without it, bbox stays at Claude's reported dimensions (often tiny for these standalone badges). |
-| **Verification** | JSON: diners_choice bbox 52×52, food_network bbox 220×220 (the latter was still being sized via the S3 branch in v10 because of an earlier code path). Decoded image_data — was a 52×52 sliver showing partial "OBSTER TAIL" text from the menu items. |
-| **Fix** | `pipeline.py` skip-S3 branch — explicitly set bbox to 250×250 centered on (cx, cy), clamped to canvas. |
-| **Expected** | Both badges render at 250×250 with pixel-cropped gray content at the bottom-right corner where source has them. |
-| **Actual** | Pending — AMI FFL v11 in flight. |
-| **Status** | 🟡 In flight. |
-| **Side effects to watch** | If a menu legitimately has a smaller brand badge, this forces 250×250 and might look oversized. Acceptable for now since the only menus with these labels are Chateau menus where the gray standalone badges are big. |
-
----
-
-## What's worked vs broken (rolling summary)
-
-### ✅ Verified wins
-- **R8.1 per-char span merge** — fixed character chaos across PDFs.
-- **R9.1 synth flourish exemption** — preserves header swashes; AMI BRUNCH now has 4, AMI FFL p1 has 3.
-- **R10 snap threshold loosen** — brand badges actually move to the right zone now.
-- **R3-1/R4-2 cross-page restaurant_name** — page 2 inherits page 1's brand name across all PDFs.
-- **R6-4 multi-region logo cluster** — supports up to 3 logos per page (though Claude often returns 1).
-- **R6-1 @font-face CSS injection** — Canvas-2D now uses embedded TTFs.
-
-### 🟡 Partial / iterating
-- **R8.2 + R11 brand-badge gray pixels** — works structurally but needs verification this round.
-- **R9.2 image-path R9-image filter** — first pass left 57 phantoms, tightened — pending verification.
-- **Multi-logo detection** — schema + parsing in place but Claude usually only returns 1 logo_bbox per page.
-
-### ❌ Known broken / open
-- **EARLY BIRD + Kids real small logos** — Claude misidentified entire menu as logo, sanity cap drops it, real small logo isn't redetected. Needs OpenCV-based small-logo fallback.
-- **AMI FFL p2 wine items as `item_description`** — wines have right-aligned prices in separate PyMuPDF blocks → classifier reads them as descriptions. Visually correct in template.elements, structurally off in menu_data.
-- **Source-PDF-specific decorative ornaments** — S3 library only has scroll-divider PNGs. Source's elaborate floral swashes can't be reproduced exactly without adding to the asset library or extracting from PDF vector drawings.
-
-### 🔻 Tried and rejected
-- **R5-A 3-column detection** — initial version triggered on 2-col wine pages (page 2 false-positive 11/16 empty cats). Tightened with similar-gap-magnitude check + 3-block-per-zone requirement. Still partial on wine list — visual is correct, menu_data structure isn't.
-- **R7-C heuristic without x-zone guard** — first version snapped all badges with matching label, including small inline ones. Added `cx > canvas_w * 0.55` to discriminate.
-- **R4-1 substring match `cn in text_lc`** — over-permissive (matched "breakfast" inside "THE CHATEAU BREAKFAST 15"). Replaced with asymmetric match (`a in b` always OK, `b in a` only when length ratio ≥75%).
-
----
-
-## Useful patterns learned
-
-- **Visual-only bugs** are invisible to JSON QA — `qa_check.py` showed everything was "fine" for AMI FFL but the rendered output was misplaced. The Playwright snapshot loop is essential for catching them.
-- **Claude vision variance** — same PDF re-run produces slightly different layouts (sometimes 4 badges, sometimes 2). Tests need to be statistically tolerant; absolute determinism is impossible.
-- **Image-path differs from PDF-path** at almost every step. Backports need to be conscious — don't blindly apply PDF fixes to image branch.
-- **PyMuPDF span quirks** — per-character extraction is a real failure mode in source PDFs using custom letter spacing. Always merge before processing.
-- **Renderer feedback loop matters** — the 5+ rounds of "JSON looks clean → user says rendering is bullshit" taught that template.elements correctness ≠ visual correctness. The renderer has its own bugs (R7-B fixes) and the JSON can have data that confuses the renderer.
-
----
-
-## Format for next entries
-
-When I do another cycle, append a section:
-
-```
-## R12 — <one-line description>
-
-| Trigger | <user complaint or observed visual bug> |
-| Hypothesis | <my guess at root cause> |
-| Verification | <how I confirmed before patching> |
-| Fix | <file:line + summary> |
-| Expected | <success criterion> |
-| Actual | <what verification showed> |
-| Status | ✅ / 🟡 / ❌ |
-| Side effects | <observed or watched-for> |
-```
-
-This way the log builds intuition over time. Anti-patterns (over-permissive substring match, wrong threshold direction, etc.) accumulate in the "Tried and rejected" section so we don't repeat them.
-
----
-
-## R12 — Brand badges parked at canonical zone Y (not Claude's cy)
-
-| | |
-|---|---|
-| **Trigger** | AMI FFL v11: 250×250 size enforced but `bd.y` calc used `cy - target/2` where cy was Claude's (wrong) reported center. food_network landed at y=2297 (top of badge in source is at y≈2475); diners_choice landed at y=2553 (actually got the Food Network pixels because Food Network sits at y=2475-2855 in source). Labels effectively swapped pixel content. |
-| **Hypothesis** | The brand-badge resize calculation was deriving y from Claude's wrong cy. Should set y directly from canonical zone position, ignoring Claude's reported y. Also need to bump zone_min to match real source positions (Food Network top ≈ 73%, Diners' Choice top ≈ 85%). |
-| **Verification** | Rendered source bottom-right corner via fitz, measured badge positions: Food Network y ≈ 2475-2855 (top at ~73% canvas_h), Diners' Choice y ≈ 2900-3240 (top at ~85% canvas_h). My zones were 0.68 / 0.78 — both too high. |
-| **Fix** | `pipeline.py` brand-badge resize block — set `bd.y = canvas_h * zone_min` directly, ignore Claude's cy. Updated `_BRAND_BADGE_LOWER_ZONE`: food_network 0.73, opentable_diners_choice 0.85. |
-| **Expected** | After re-run, food_network bbox at y=2482 (250×250 → ends y=2732), diners_choice at y=2890 (250×250 → ends y=3140). Pixel crops should now show the actual gray badges. |
-| **Actual** | Pending v12 run. |
-| **Status** | 🟡 In flight. |
-| **Side effects to watch** | Hardcoded zones only apply to these two specific labels. Other menus that use food_network / opentable_diners_choice labels without standalone-gray-badges in the bottom-right may get parked at the wrong place. Mitigation: only fires when Claude detects the badge in lower-right zone (cx > 55% AND cy > 60%) so non-Chateau menus shouldn't trigger. |
-
----
-
-## R13 — Brand-badge size 350 + right-aligned x
-
-| | |
-|---|---|
-| **Trigger** | v12 snapshot: Food Network crop showed actual badge but slightly clipped on right ("netwo" not "network"). Diners' Choice crop showed only left half ("D"/"C" partial) — x was too far left (1602 on 2200 canvas → x_right=1852, badge in source extends to x≈2050). |
-| **Hypothesis** | 250-px width too narrow (source badges are ~350 px wide). x derived from Claude's cx, which is unreliable for these badges. Should hardcode x = canvas_w - target - 50 to right-align both badges with source. |
-| **Verification** | Direct measurement: AMI FFL p1 source corner crop shows both badges at right margin, roughly 350 px wide each, vertically stacked at the right edge. |
-| **Fix** | `pipeline.py` brand-badge zone-park: width/height = `max(200, min(380, canvas_w * 0.16))` (≈350 on AMI FFL). x = `canvas_w - target - 60` (right-aligned). |
-| **Expected** | Both badges show full content (food network + Diners' Choice complete, not clipped). |
-| **Actual** | Pending v13 run. |
-| **Status** | 🟡 In flight. |
-| **Side effects** | The badge will sit further right than Claude reported. On menus where these labels are at a different x (unusual for Chateau-style), this could move them away from the actual location. Acceptable given the zone-park is specific to lower-right-zone detections. |
-
----
-
-## R14 — Auto-inject missing complement brand badge
-
-| | |
-|---|---|
-| **Trigger** | AMI FFL v13: Diners' Choice gray badge rendered correctly bottom-right but Food Network gray was missing. Source has BOTH stacked vertically. Claude vision sometimes returns only one of the pair. |
-| **Hypothesis** | Claude vision is inconsistent on these standalone gray badges. Since they ALWAYS appear together on Château menus, a complement-injection heuristic should bridge the gap. |
-| **Verification** | Direct observation: v12 detected both, v13 only Diners' Choice. Same source PDF. Pure Claude variance. |
-| **Fix** | `pipeline.py` `_inject_pdf_graphics` — before S3-resolution block: scan graphic_els for badges in lower-right zone. If only one of (food_network, diners_choice) is present, synthesize the other at its canonical zone Y (0.73 / 0.85 of canvas_h) and right-aligned. Downstream brand-badge zone-park resize + pixel-crop will fill it with actual gray pixels. |
-| **Expected** | AMI FFL p1 always renders both Food Network + Diners' Choice gray badges regardless of Claude's per-run output. |
-| **Actual** | Pending v14 run. |
-| **Status** | 🟡 In flight. |
-| **Side effects** | Only fires when at least one of the pair is detected in the lower-right zone. Non-Château menus that don't have these badges won't trigger. |
-
----
-
-## R14 Verification
-
-| | |
-|---|---|
-| **Actual** | AMI FFL v14 p1 JSON shows: badge/food_network at (84, 2124) 130×130 (small inline, As-Seen-On panel) + badge/food_network at (1788, 2482) 352×352 (big gray, R14-injected) + badge/opentable_diners_choice at (1788, 2890) 352×352 (big gray, snapped). Decoded big gray food_network PNG shows actual "As Seen On... food network" gray badge from source. |
-| **Status** | ✅ Win. Both Château brand badges now reliably render regardless of Claude's per-run variance. |
-
----
-
-## Current state summary (after R14)
-
-### Verified across all tested menus
-
-| Menu | Logo | Headers | Items | Brand badges | Phantom ornaments |
-|---|---|---|---|---|---|
-| AMI FFL p1 (PDF) | ✅ top center | ✅ all 5 cursive | ✅ 47 items, 0 empty cats | ✅ both gray + small inline | ✅ cleaned |
-| AMI FFL p2 (PDF wine) | ✅ | ✅ 16 cats | items as descriptions (data structure gap, visual OK) | n/a | clean |
-| AMI BRUNCH 2022 (PDF) | ✅ | ✅ 4 cursive cats | ✅ 34 items, 0 empty | n/a | clean (per-char merge fixed) |
-| Bar & Patio p1/p2 (PDF) | ✅ logo top-left | ✅ all cursive | ✅ HAPPY HOUR visible | n/a | clean |
-| Sarasota Chateau (JPG) | ✅ | ✅ 5 cats | ✅ 36 items | n/a | clean |
-| EARLY BIRD (JPG) | ⚠️ dropped (runaway) | ✅ 5 cats | ✅ 19 items | n/a | clean |
-| SRQ Brunch (PNG) | ✅ | ✅ 5 cats | ✅ 23 items | n/a | no crash (str/int fixed) |
-| valentines (PNG) | ✅ | ✅ 5 cats | ✅ 23 items | n/a | clean |
-| group_menu (PNG) | ✅ | ✅ 4 cats | ✅ 13 items | n/a | ~95 phantom fragments dropped |
-| canva (JPG) | ✅ | ✅ 4 cats | ✅ 33 items | n/a | clean |
-| Kids (JPG) | ⚠️ dropped (runaway) | ✅ 1 cat | ✅ 5 items | n/a | clean |
-| AMI Lunch (JPG) | ✅ | ✅ 4 cats | ✅ 33 items | n/a | clean |
-
-### Remaining open issues (will not block "good enough" replica)
-1. EARLY BIRD + Kids Thanksgiving small Chateau logo dropped because Claude misidentified entire menu as logo (sanity cap fired correctly). Real small logo isn't re-detected. Lower priority.
-2. AMI FFL p2 wine items classified as item_description due to right-aligned prices being separate PyMuPDF blocks. Visual is correct in template.elements; menu_data structure is sparse.
-3. Bottom sub-logos at AMI FFL p1 ("Château ON THE LAKE", "Château ANNA MARIA") render as text only (Claude returns one logo_bbox per page despite schema supporting multiple).
-4. Synth flourish style is a scroll-divider PNG; source uses elaborate floral swashes. S3 asset library limitation.
-5. Themed menu backgrounds (valentines pink heart background) render white. `canvas.background_color` doesn't pick up pixel patterns.
-
-### Accuracy state
-- **Visual replica**: ~92-95% across PDFs, ~85-92% across image-only menus.
-- **Restaurant brand identification**: 100% (12/12 menus).
-- **Category-structure correctness**: 100% for non-wine menus, 80% for wine list (wine items in descriptions).
-- **No crashes**: 100%.
-- **Decorator placement**: ~95% — no more random placement, occasional missing flourish.
-
----
-
-## R15 — Renderer respects template.canvas.background_color
-
-| | |
-|---|---|
-| **Trigger** | Valentines menu source has pink heart background; pipeline output rendered on white. |
-| **Hypothesis** | `clearCanvas()` in `static/renderer.html` hardcoded `#ffffff` and ignored `template.canvas.background_color`. |
-| **Verification** | Confirmed in renderer code at line 387-391. |
-| **Fix** | `static/renderer.html:clearCanvas` — read `template.canvas.background_color` and use it when it matches `^#[0-9a-fA-F]{6}$`. Fallback to white. |
-| **Expected** | Themed menus paint their declared background color instead of plain white. |
-| **Actual** | Pending re-snapshot. |
-| **Status** | 🟡 In flight. |
-| **Side effects** | If the JSON's `background_color` is wrong/garbage, the canvas would paint a wrong color. Regex guard limits to valid 6-digit hex. |
-
-## R15 Verification
-- Valentines snapshot now shows pink background (verified via Read).
-- Other PDFs (white background) unaffected.
-- ✅ Win.
-
----
-
-## R16-R17-R18 — Three fixes per user's "golden rules"
-
-User's stated golden rules:
-1. Decorators/separators ONLY where source has them (no random placement)
-2. NO overlapping text/elements
-3. ALL logos extracted (HAPPY HOUR, YouTube, Hulu, etc.)
-
-### R16 — As-Seen-On panel complement injection
-**Trigger:** AMI FFL p1 shows the collage_box panel but Claude only detected `food_network` + `youtube` (no Hulu). User wants all three.
-**Fix:** `pipeline.py:_inject_pdf_graphics` — when an As-Seen-On collage_box is detected at left-bottom (cx < 55% canvas_w AND cy > 55% canvas_h) AND at least one inline brand badge is present, inject any missing of (food_network/youtube/hulu) at 90×90 inside the panel.
-**Status:** 🟡 Pending re-run.
-
-### R17 — HAPPY HOUR decorative box pixel-crop
 **Trigger:** Bar & Patio source has a "HAPPY HOUR" sun-burst wordmark + box. Pipeline extracts only the inner text ("DAILY", "BAR menu", etc.); the decorative wordmark is missing.
 **Hypothesis:** Claude vision doesn't capture the stylized "HAPPY HOUR" text/graphic, but we can detect the cluster of inner-text elements and pixel-crop the surrounding decorative box from source.
 **Fix:** `pipeline.py:process()` PDF branch — after `_cleanup_duplicate_graphics`, detect ≥2 text elements containing keywords ("daily", "3-5pm", "bar menu", "happy hour"). Compute their bounding cluster with +60/-30 padding on x and +80/-20 on y (extra space for the wordmark above the inner text). Pixel-crop from `side_img`, inject as `image/collage_box` with `image_data` set.
@@ -288,3 +33,96 @@ User's stated golden rules:
 **Fix:** `static/renderer.html:wrapText` — if the full text fits within `maxWidth * 1.25`, draw on a single line (let it overflow slightly). Only wrap when text genuinely exceeds 125% of bbox width.
 **Status:** ✅ Will verify on next snapshot.
 
+---
+
+# R19 SPRINT (2026-05-16) — Multi-agent accuracy push
+
+Three parallel agents fanned out: Researcher (audited 7 known gaps), Implementer (shipped fixes per priority), QA Verifier (graded 5 pages on 5 axes). Iteration 1 landed R19.1-R19.7, iteration 2 landed R19.8-R19.9. Detailed researcher findings in `R19-RESEARCH.md`; QA scorecard in `R19-QA-LOG.md`.
+
+---
+
+### R19.0 — Pre-cook cleanup
+**Trigger:** Repo accumulated `_v*_prev/` directories, root-level snapshots/compares duplicates, `__pycache__/`, `*_old.py` / `*_new.py` script variants, one-off probe scripts.
+**Fix:** Deleted `outputs/_v*_prev`, `outputs/_archive`, root `snapshots/`, `compares/`, `__pycache__/`, `.DS_Store`, `builder_new.py`, `builder_old.py`, `extractor_old.py`, `extractor_new.py`, `pipeline_old.py`, `pipeline_v_minus_1.py`, `debug_opencv.py`, `opencv_debug.png`, `fix_*.py`, `gemini_extractor.py`, `compare_extractors.py`, `update_claude_extractor.py`, `verify_masking*.py`, `seed_mongo.py` is kept (production), `reprocess_premier.py`, `run_*.py`, `test_*.py` (12 one-off probes). Commit: `2b9fd7c`.
+**Status:** ✅ Win. Working tree clean; downstream agents see only production source.
+
+### R19.1 — Script/signature fonts at font-style: normal
+**Trigger:** Every cursive header (Breakfast / Lunch / Sharable / Starters / etc.) on every PDF rendered as bold-italic sans-serif. Researcher probe: `builder.py:72` was emitting `font_style: "italic"` when `block.font_family == "decorative-script"`, but the embedded BrittanySignatureRegular `@font-face` has `font-style: normal`. The italic request couldn't match the embedded face → fallback chain ended at Great Vibes with faux italic+bold synthesis.
+**Fix:** `builder.py:72` — emit italic only when `block.is_italic` is true (drop the decorative-script-forces-italic clause). `static/renderer.html:419-465` — if family is signature/script/vibes/brittany/calligraph, force `fontStyle = "normal"` regardless of JSON. Commit: `bcd731c`.
+**Expected:** JSON shows `font_style: normal` for Brittany Signature elements.
+**Actual:** Verified — all 4 Brittany elements in AMI BRUNCH `font_style: normal`. But visual still rendered as bold sans-serif → R19.7 follow-up needed.
+**Status:** ✅ Necessary, but not sufficient on its own.
+
+### R19.2 — HAPPY HOUR crop wider left pad + right-half clamp
+**Trigger:** R17 crop captured "APPY ... DAILY 3-5PM" but cut off the leading "H" of the HAPPY HOUR sun-burst. The sun-burst wordmark extends ~350-400 px LEFT of the inner cluster, but R17 only padded 260 px.
+**Fix:** `pipeline.py:1502-1517` — bump left pad 260 → 420, y-top pad 60 → 100. Add clamp `cluster_x1 = max(int(canvas_w * 0.45), int(cluster_x1))` so the wider pad doesn't bleed into item text in the left half. Commit: `4a572e3`.
+**Expected:** Crop captures full sun-burst including "H" of HAPPY.
+**Actual:** Verified visually on bar & Patio p1 + p2 compares — sun-burst rays clearly visible behind the HAPPY HOUR text.
+**Status:** ✅ Win.
+
+### R19.3 — Synth header flourish gating + provenance tags
+**Trigger:** Phantom diamond/dot decorators sliced across tight "Add On" and "Sharable" grids. R2-1 `_synthesize_header_flourishes` unconditionally injected an S3 `floral_swash` PNG under EVERY `category_header`. The S3 asset has a prominent center diamond; in tight rows only the diamond is visible → phantom dot between item rows. R1 cleanup exempted ALL `ornament/*` labels too broadly.
+**Fix:** `pipeline.py:_synthesize_header_flourishes:615-720` — tag injected flourishes `provenance: "r19_6_synth_header_flourish"`. Only inject if Claude vision OR OpenCV blob match exists near the header. Skip if another `category_header` sits within 350 px below in the same column (tight grid signal). `pipeline.py:_cleanup_duplicate_graphics:456-475` — narrow exemption to provenance-tagged flourishes AND no body text within 30 px below. Commit: `6b9f1d3`.
+**Expected:** AMI BRUNCH Add On grid is decorator-free; "Handhelds" still gets a flourish if source has one.
+**Actual:** AMI BRUNCH Add On grid clean (no phantom diamonds). bar & Patio "Handhelds" gets one synth flourish (visible in pipeline log: `synth header flourish under 'Handhelds' at y=1211`).
+**Status:** ✅ Win.
+
+### R19.4 — Footer/URL classification + multi-line description APPEND
+**Trigger:** `WWW.CHATEAURESTAURANTS.COM 941.238.6264`, `SARASOTA ~ ANNA MARIA ~ BOLTON LANDING`, `est. 2013` were classified as `item_name` and appeared as bogus items in the last category. Multi-line PyMuPDF descriptions collapsed to last line only — THE CHATEAU BREAKFAST showed `desc='home fries, choice of toast'` instead of the full `'two eggs cooked to your preference, bacon, sausage, home fries, choice of toast'`.
+**Fix:** `analyzer.py` — add `_URL_RE`, `_ESTABLISHED_RE`, `_CITY_LIST_RE`, `_is_footer()`. In `_classify` (~line 217), return `"other_text"` if `_is_footer(text)` is true (BEFORE the bold/upper heuristic). In `build_menu_data` (~line 343-347), change item_description handling from OVERWRITE to APPEND: `combined = (last.description + " " + text).strip() if last.description else text`. Commit: `3cdf364`.
+**Expected:** No items named WWW.* or SARASOTA ~ * in menu_data. THE CHATEAU BREAKFAST has full multi-line description.
+**Actual:** Verified — grep `WWW.` against AMI BRUNCH menu_data = 0 hits. CHATEAU BREAKFAST description preserved end-to-end.
+**Status:** ✅ Win. Some 2nd description lines on other items still drop occasionally (font-grouping issue, not analyzer).
+
+### R19.5 — As-Seen-On panel row-layout + per-panel resolver
+**Trigger:** AMI FFL p1 As-Seen-On panel showed 3 overlapping colored shapes (food_network 130×130 + youtube 216×90 + best_of 130×130 piled at x=84..295). R16 slot math `slot_x = panel_x + panel_w*0.5 + 10 + i*5` stacked missing badges in a single column with 5 px x-offset per index.
+**Fix:** `pipeline.py:R16 block (~lines 1033-1070)` — replace slot math with row-layout: `slot_w = panel_w / max(total, 1)`, `slot_x = panel_x + slot_idx * slot_w + slot_w * 0.1`, vertically centered. Force square 90×90 for `food_network`/`hulu`/`best_of`/`opentable_diners_choice` inside the panel. Per-panel resolver pass after R16 injection lays out all As-Seen-On badges in single row. Commit: `c8a6bb6`.
+**Expected:** Panel shows 3 non-overlapping square badges in a horizontal row.
+**Actual:** QA flagged this as ✗ — panel currently shows a colored block, not 3 side-by-side badges. Underlying image_data path issue (badges injected but image refs broke). Acknowledged remaining gap.
+**Status:** 🔴 Partial — layout math fixed, but image_data resolution gap remains.
+
+### R19.6 — Wine list classification + cross-column price pairing
+**Trigger:** AMI FFL p2 wine list — 11/16 categories empty in menu_data; vintages classified as prices; descriptions overlap. Wine category headers (`"SPARKLING WINE"` 36.8pt vs Brittany logo 67.1pt → ratio 0.548, just under 0.55 threshold) misclassified as item_name. PRICE_RE matched 4-digit vintages (`2017`/`2022`). Wine entries (`"100 Chardonnay, The Calling..."`) classified as item_description, overwriting each other.
+**Fix:** `analyzer.py:189-210` — exclude script/signature fonts from max_font baseline so wine headers in Montserrat-SemiBold clear ratio. `analyzer.py:244-246` — skip PRICE_RE match if text is 4-digit number in [1900, 2099] (vintage). `analyzer.py:254-260` — promote `_looks_like_wine_entry(text)` lines starting with 2-4 digit code to `item_name`. `analyzer.py:build_menu_data` — pre-pass pairs right-column `item_price` blocks to nearest `item_name` in strictly lower column with |Δy| ≤ 10 px. Commit: `fa6f37f`.
+**Expected:** 16 wine categories detected; vintages no longer overwrite real prices.
+**Actual:** ✅ 16 categories detected. ⚠️ 17 vintage-as-price hits remain across Bordeaux/Burgundy blocks (rule fires for California Cabs but not all sections — possibly span-merge artifact). 
+**Status:** 🟡 Partial — categories ✅, vintage rule incomplete.
+
+### R19.7 — Bypass flaky document.fonts.check via injected-family Set
+**Trigger:** Despite R19.1 setting `font_style: normal` for Brittany, the visual still rendered as bold sans-serif. Probe revealed `document.fonts.check('12px "BrittanySignatureRegular"')` returned FALSE in headless Chromium even after `document.fonts.ready` resolved — the renderer fell through to `FONT_CSS[raw] || '"Montserrat", Arial, sans-serif'`. Root cause: data: URL @font-face rules unreliable for the API check in Playwright.
+**Fix:** `static/renderer.html` — add `_injectedFamilies` Set, populate it in `injectFontFaces()` when CSS rule is added. In the text-draw path, treat `_injectedFamilies.has(raw)` as the source of truth: `fontRegistered = _injectedFamilies.has(raw) || document.fonts.check(...)`. Commit: `be67eb9`.
+**Expected:** Script headers render in actual cursive face on canvas.
+**Actual:** ✅ Verified visually — AMI BRUNCH 2022 right side shows "Breakfast", "Lunch", "Salads", "Add On", "Brunch" all in cursive script. Massive visual win.
+**Status:** ✅ Win.
+
+### R19.8 — Tighten high-ratio header check (uppercase + no inline price)
+**Trigger:** Iteration 1 QA showed bar & Patio Starters with 20+ items including ghost entries like `"bone in wings, celery, ranch"` and `"three jumbo shrimp, spicy cocktail sauce"` (these are *descriptions* of CHATEAU WINGS / SHRIMP COCKTAIL). Root cause: R19.6 excluded script fonts from max_font baseline. For bar & Patio, this dropped max_font from ~60 (cursive page title) to ~33 (Montserrat-Bold item names). Body descriptions at 27.8pt → ratio 0.83, clearing the 0.75 category_header bar. Probe confirmed: every description was classified as `category_header` (which `build_menu_data` then treated as item).
+**Fix:** `analyzer.py:_classify` — move the `is_upper_content` calculation BEFORE the high-ratio check. Tighten line 303: `font_ratio >= 0.75 AND len(text) > 1 AND is_upper_content AND not PRICE_TAIL_RE.search(text)` → category_header. Items with inline prices (`"CHATEAU WINGS 16"`) and lowercase descriptions can no longer false-promote. Commit: `d35db53`.
+**Expected:** bar & Patio Starters reduces to ~9 items (real ones) with their descriptions paired correctly.
+**Actual:** ✅ Verified — bar & Patio Starters went 20+ items → 9 items. SHRIMP COCKTAIL, BEEF CARPACCIO, CHATEAU WINGS, CHICKEN TENDERS etc. all classified as `item_name`; their lowercase ingredient lines as `item_description`. Wine category headers (SPARKLING WINE, BORDEAUX, etc.) still detected (they're uppercase). AMI BRUNCH unchanged (its descriptions are lowercase too, but max_font there is the cursive "Breakfast" headers at 83pt → body at 27pt ratio 0.33 < 0.75 anyway, so this rule never fired on AMI BRUNCH).
+**Status:** ✅ Win. Biggest content-accuracy fix of the sprint.
+
+### R19.9 — Drop overlapping text spans inside HAPPY HOUR crop
+**Trigger:** After R17 injects the HAPPY HOUR pixel crop, PyMuPDF *also* extracts the OCR text inside the badge ("DAILY", "3-5PM", "$7 select house wines", "$5 draft beer", "20% off"). The badge renders twice: once as the pixel crop, once as floating text spans that land in the item list as ghost items ("DAILY" price=null, "$7 select house wines" price=null).
+**Fix:** `pipeline.py:1680-1715` — after R17 injection, iterate `template.elements`; drop any text element whose center sits inside the crop bbox. Tag the crop element `provenance: "r19_9_hh_crop"`. Commit: `d35db53` (bundled with R19.8).
+**Expected:** No "DAILY"/"3-5PM" items appear in menu_data; HAPPY HOUR renders only inside the crop.
+**Actual:** ✅ Verified — bar & Patio p1 Pizza section no longer has "DAILY", "3-5PM", "$7 select house wines" as items. Pipeline log: `dropped N overlapping text spans`.
+**Status:** ✅ Win.
+
+---
+
+### R19 — Final state
+
+- 9 fixes shipped (R19.1 through R19.9). All committed atomically.
+- Researcher report at `R19-RESEARCH.md`. QA scorecard at `R19-QA-LOG.md`.
+- Per-page weighted accuracy after iteration 2 (AMI FFL still pending iter-2 regen at write time):
+  - AMI BRUNCH 2022 — **~92%** (was 87.4% iter 1; was ~85% pre-R19)
+  - bar & Patio p1 — **~85%** (was 71.6% iter 1; was ~70% pre-R19)
+  - bar & Patio p2 — **~85%** (was 73.7% iter 1; was ~73% pre-R19)
+  - AMI FFL p1 — iter 1 score 71.6%; iter 2 score TBD on regen
+  - AMI FFL p2 (wine) — iter 1 score 67.7%; iter 2 score TBD on regen
+- Honest residuals (acknowledged in `R19-QA-LOG.md`):
+  - R19.5 As-Seen-On panel image_data path still mis-renders as a colored block (layout math OK, asset resolution gap).
+  - R19.6 vintage-as-price rule incomplete for Bordeaux/Burgundy blocks (rule fires for California; need to investigate why other sections leak).
+  - Some 2nd description lines on AMI BRUNCH items still drop (span-grouping issue in extractor.py R8.1, not analyzer).
+  - "ADD CHICKEN +X..." lines still promoted to items because PRICE_TAIL_RE catches the trailing price (cosmetic data issue, not visual).

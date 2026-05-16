@@ -446,13 +446,53 @@ open latest_pdf_results/_compares/*.png
 
 ---
 
-## 12. Final state at session end
+## 12. Final state at end of R18 session
 
-- ✅ R1–R18 shipped. PDF avg ~93%, all-menus avg ~88%.
+- ✅ R1–R18 shipped. PDF avg ~93% claimed (~70-75% actual visual per user).
 - ✅ `latest_pdf_results/` populated with clean PDF results, snapshots, compares, README.
 - ✅ Golden Rule 1 (decorators only where source has them): respected via R1 + R9-1 + R2-1 opt-in.
 - ✅ Golden Rule 2 (no overlapping): respected via R1 cleanup + R7-B-1 wrap.
 - ⚠️ Golden Rule 3 (all logos): partial — big brand badges yes (R13 + R14), HAPPY HOUR yes (R17), As-Seen-On companions yes (R16). Small sub-logos at AMI FFL bottom still render as cursive text — acknowledged content gap.
-- 📁 Working dir clean: M analyzer.py, M claude_extractor.py, M pipeline.py (uncommitted local changes from this session). **Commit recommendation:** one commit per surviving R-round, tagged.
 
-End of handoff.
+---
+
+## 13. R19 sprint (2026-05-16) — multi-agent accuracy push
+
+R19 was a multi-agent fan-out: Researcher → Implementer → QA Verifier, two iterations. Detailed entries in `R8-R11-ITERATION-LOG.md`; researcher findings in `R19-RESEARCH.md`; QA scorecard in `R19-QA-LOG.md`.
+
+**Shipped:**
+- **R19.0** `2b9fd7c` — pre-cook cleanup (deleted stale `_v*_prev`, `_old`/`_new` script variants, root snapshots/compares, one-off probes).
+- **R19.1** `bcd731c` — script/signature fonts no longer forced to italic in builder; renderer guard forces normal for signature/script/vibes/brittany/calligraph families.
+- **R19.2** `4a572e3` — HAPPY HOUR crop widened (left pad 260→420, y-top 60→100) with right-half clamp `max(canvas_w*0.45)`.
+- **R19.3** `6b9f1d3` — synth header flourish only injected when Claude OR OpenCV evidence exists near the header; skipped in tight grids (`category_header within 350 px below`); narrowed cleanup exemption to provenance-tagged elements.
+- **R19.4** `3cdf364` — added `_URL_RE`, `_ESTABLISHED_RE`, `_CITY_LIST_RE`, `_is_footer()` in analyzer; descriptions now APPEND (not overwrite) so multi-line PyMuPDF descriptions survive.
+- **R19.5** `c8a6bb6` — As-Seen-On panel row-layout slot math (was column pile-up); per-panel resolver; square-force for `food_network`/`hulu`/`best_of`/`opentable_diners_choice`.
+- **R19.6** `fa6f37f` — wine list: script fonts excluded from max_font baseline, 4-digit year [1900,2099] not a price, wine-entry promotion (`^\d{2,4}\s+` + `_looks_like_wine_entry`), cross-column price pairing pre-pass in `build_menu_data`.
+- **R19.7** `be67eb9` — renderer uses `_injectedFamilies` Set instead of (flaky) `document.fonts.check()`; canvas now actually consults the embedded Brittany Signature face.
+- **R19.8** `d35db53` — high-ratio header check tightened: requires uppercase content AND no inline price tail. R19.6 had dropped max_font for non-wine PDFs and false-promoted descriptions; this fixes it.
+- **R19.9** `d35db53` — after R17 HAPPY HOUR pixel-crop injection, drop any text element whose center sits inside the crop bbox (kills double-counted ghost items like "DAILY", "3-5PM").
+
+**Per-page weighted accuracy (post-R19, honest):**
+| Page | Pre-R19 (actual) | Iter 1 | Iter 2 (final) |
+|---|---|---|---|
+| AMI BRUNCH 2022 | ~78% | 87.4% | ~92% |
+| AMI FFL p1 | ~70% | 71.6% | (regen in flight at write time) |
+| AMI FFL p2 (wine) | ~55% (gross) | 67.7% | (regen in flight) |
+| bar & Patio p1 | ~70% | 71.6% | ~85% |
+| bar & Patio p2 | ~73% | 73.7% | ~85% |
+
+**Biggest single win:** R19.7 (font check bypass) + R19.8 (header-check tightening). Together they made script-font headers actually render and stopped descriptions from being promoted to items.
+
+**Honest residuals (not 95%):**
+- R19.5 As-Seen-On panel image_data path: layout math fixed, but visual still shows colored block instead of 3 side-by-side badges. Asset resolution / image_data injection gap.
+- R19.6 vintage-as-price: rule lands for California Cabs but Bordeaux/Burgundy still leak (~17 hits). Suspected span-merge artifact concatenating vintage with adjacent text.
+- AMI BRUNCH some 2nd description lines still drop (span grouping in extractor R8.1, not analyzer).
+- "ADD CHICKEN +X..." lines still promoted to items via PRICE_TAIL_RE — cosmetic data issue, not visual.
+- AMI FFL p1 small sub-logos at bottom-left ("Beat Bobby Flay", "Summer Rush") still render as text not logo PNGs — Claude returns 1 logo_bbox per page despite schema supporting multiple.
+
+**Lessons:**
+- The pixel-vs-point trap recurred: R19.6 fixed wine cat headers but broke description classification on bar & Patio. Shared denominator (`max_font`) flowing through multiple rules requires per-rule guards.
+- Provenance tagging is mandatory when two passes touch the same element. R19.3 + R19.9 both use provenance to scope cleanup behavior. Bake this in from day one for future synth/inject passes.
+- Renderer-level "I have the data" Set beats library-level "is it loaded?" check when the browser's API is flaky. `_injectedFamilies` source-of-truth beats `document.fonts.check`.
+
+End of R19 handoff.
