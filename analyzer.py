@@ -240,6 +240,16 @@ def classify_blocks(
 def _classify(b: RawBlock, max_font: float, header_zone: float, restaurant_assigned: bool, canvas_w: float = 0.0) -> SemanticType:
     text = b.text.strip()
 
+    # R20.4: check PRICE_RE BEFORE the short-text guard. Wine lists have
+    # plenty of legitimate 2-digit prices ('57', '70', '40') that the prior
+    # `len <= 2` short-circuit was demoting to other_text, leaving 48% of
+    # wines with null price after cross-column pairing.
+    if PRICE_RE.match(text):
+        # R19.6: wine vintages (4-digit years 1900-2099) are NOT prices.
+        if text.isdigit() and len(text) == 4 and 1900 <= int(text) <= 2099:
+            return "other_text"
+        return "item_price"
+
     if len(text) <= 2:
         return "other_text"
 
@@ -247,14 +257,6 @@ def _classify(b: RawBlock, max_font: float, header_zone: float, restaurant_assig
     # bold-upper heuristic claims them as items.
     if _is_footer(text):
         return "other_text"
-
-    if PRICE_RE.match(text):
-        # R19.6: wine vintages (4-digit years 1900-2099) are NOT prices. They
-        # render in the same right-aligned column as prices in wine lists and
-        # would otherwise overwrite the real $-price for the same row.
-        if text.isdigit() and len(text) == 4 and 1900 <= int(text) <= 2099:
-            return "other_text"
-        return "item_price"
 
     if PHONE_RE.fullmatch(text):
         return "phone"
